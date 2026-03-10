@@ -1,0 +1,10 @@
+# Source & config (dist/ is included via "files" in package.json)
+src/
+examples/
+tsconfig.json
+tsup.config.ts
+.gitignore
+.github/
+coverage/
+*.tgz
+.pinecode/

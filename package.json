@@ -1,0 +1,77 @@
+{
+  "name": "@pinecall/sdk",
+  "version": "0.2.0",
+  "description": "Build AI voice agents in minutes — TypeScript SDK + CLI for real-time voice over phone, WebRTC, or browser mic.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "pinecall": "./dist/cli/index.js"
+  },
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pinecall/pinecall-js-sdk.git"
+  },
+  "homepage": "https://pinecall.io",
+  "bugs": {
+    "url": "https://github.com/pinecall/pinecall-js-sdk/issues"
+  },
+  "author": "Pinecall <hello@pinecall.io>",
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "voice",
+    "ai",
+    "websocket",
+    "stt",
+    "tts",
+    "realtime",
+    "pinecall",
+    "twilio",
+    "webrtc",
+    "voice-agent",
+    "conversational-ai",
+    "cli"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^25.4.0",
+    "openai": "^6.27.0",
+    "tsup": "^8.0.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  },
+  "dependencies": {
+    "chalk": "^5.6.2",
+    "openai": "^6.27.0"
+  }
+}
