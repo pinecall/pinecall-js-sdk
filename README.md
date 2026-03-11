@@ -274,6 +274,11 @@ agent.on("eager.turn", async (turn, call) => {
 | `bot.interrupted` | `(event, call) => void` | Bot interrupted (barge-in) |
 | `turn.continued` | `(event, call) => void` | User kept talking — abort reply |
 | `reply.rejected` | `(event, call) => void` | Reply rejected (stale) |
+| `agent.displaced` | — (emitted on `disconnected`) | Another client took over this agent_id |
+
+### Phone Exclusivity
+
+Each phone number is exclusively owned by one agent. Adding a phone already in use by another agent returns `PHONE_IN_USE`. If the same `agent_id` reconnects, the old connection is displaced (`disconnected` event with reason `displaced:...`).
 
 ---
 
