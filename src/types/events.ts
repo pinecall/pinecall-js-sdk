@@ -249,6 +249,12 @@ export interface PongEvent {
     timestamp: number;
 }
 
+export interface AgentDisplacedEvent {
+    event: "agent.displaced";
+    agent_id: string;
+    reason: string;
+}
+
 // ─── Hold / Mute ─────────────────────────────────────────────────────────
 
 export interface CallHeldEvent {
@@ -305,6 +311,7 @@ export type ServerEvent =
     | RegisteredEvent
     | ErrorEvent
     | PongEvent
+    | AgentDisplacedEvent
     | CallHeldEvent
     | CallUnheldEvent
     | CallMutedEvent

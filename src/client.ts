@@ -593,6 +593,19 @@ export class Pinecall extends TypedEmitter<PinecallEvents> {
             case "pong":
                 break;
 
+            // ── Displaced: another client registered with same agent_id ──
+            case "agent.displaced":
+                this._closing = true;          // Prevent reconnection
+                this._stopPing();
+                this._reconnector?.cancel();
+                this._connected = false;
+                this.emit(
+                    "disconnected",
+                    `displaced: ${(data.reason as string) ?? "replaced_by_new_connection"}`,
+                );
+                try { this._ws?.close(1000, "displaced"); } catch { /* ignore */ }
+                break;
+
             case "call.dialing":
                 break;
 

@@ -78,7 +78,10 @@ agent.on("call.started", (call) => {
   call.say("Hello! How can I help you?");
 });
 
-agent.on("turn.end", async (turn, call) => {
+// eager.turn fires before the user fully stops speaking,
+// giving you the lowest possible latency. If the user keeps
+// talking the reply stream is automatically aborted.
+agent.on("eager.turn", async (turn, call) => {
   const stream = call.replyStream(turn);
   for await (const token of myLLM.stream(turn.text)) {
     if (stream.aborted) break;
@@ -209,6 +212,50 @@ agent.on("turn.end", async (turn, call) => {
   stream.end();
 });
 ```
+
+### Eager Turn
+
+`eager.turn` fires as soon as the turn detector _thinks_ the user has stopped
+speaking — before waiting for the full silence confirmation that `turn.end`
+requires. This lets you start generating a response immediately, shaving
+hundreds of milliseconds off perceived latency.
+
+If the user **keeps talking**, the reply stream is automatically aborted
+(`stream.aborted` becomes `true`), so no stale audio is sent.
+
+```typescript
+agent.on("eager.turn", async (turn, call) => {
+  const stream = call.replyStream(turn);
+
+  const completion = await openai.chat.completions.create({
+    model: "gpt-4.1-nano",
+    messages: [
+      { role: "system", content: "You are a helpful voice assistant." },
+      { role: "user", content: turn.text },
+    ],
+    stream: true,
+  });
+
+  for await (const chunk of completion) {
+    if (stream.aborted) break;
+    const token = chunk.choices[0]?.delta?.content;
+    if (token) stream.write(token);
+  }
+
+  stream.end();
+});
+```
+
+**When to use it:**
+
+| ✅ Good fit | ❌ Avoid |
+|---|---|
+| Small, fast models (`gpt-4.1-nano`, `gpt-4.1-mini`) | Large / expensive models (`o3`, `o4‑mini`) |
+| Conversational assistants where speed matters | Code-generation or reasoning-heavy tasks |
+| Short answers (1–2 sentences) | Long-form responses where wasted tokens are costly |
+
+> **Tip:** Pair `eager.turn` with `smart_turn` detection for the best balance
+> between responsiveness and accuracy.
 
 ---
 
