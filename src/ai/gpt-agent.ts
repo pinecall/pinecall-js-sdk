@@ -327,6 +327,7 @@ export class GPTAgent {
             const greeting = this._greetingForCall(call) ?? this.greeting;
             if (greeting) {
                 call.say(greeting);
+                history.addAssistant(greeting);
             }
         });
 
@@ -412,6 +413,11 @@ export class GPTAgent {
         }
 
         stream.end();
+
+        // Add assistant reply to conversation history
+        if (reply && !stream.aborted) {
+            history.addAssistant(reply, stream.messageId);
+        }
 
         // If the model requested tool calls, execute them
         if (toolCalls.length > 0 && !stream.aborted) {

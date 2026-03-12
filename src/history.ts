@@ -61,6 +61,9 @@ export class ConversationHistory {
     }
 
     addAssistant(text: string, messageId?: string): void {
+        if (!text) return; // skip empty
+        // Skip duplicate by messageId
+        if (messageId && this._messages.some(m => m.role === "assistant" && m.messageId === messageId)) return;
         this._messages.push({ role: "assistant", content: text, messageId });
         this._notify();
     }
