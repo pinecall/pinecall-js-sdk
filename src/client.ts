@@ -222,6 +222,18 @@ export class Pinecall extends TypedEmitter<PinecallEvents> {
         return _fetchPhones(opts);
     }
 
+    // ── Instance API helpers (auto-inject apiKey) ─────────────────────────
+
+    /** Fetch available TTS voices. */
+    fetchVoices(opts?: Omit<FetchVoicesOptions, "apiKey">): Promise<Voice[]> {
+        return _fetchVoices(opts);
+    }
+
+    /** Fetch phone numbers on your account. */
+    fetchPhones(opts?: Omit<FetchPhonesOptions, "apiKey">): Promise<Phone[]> {
+        return _fetchPhones({ ...opts, apiKey: this._opts.apiKey });
+    }
+
     // ── Connect / Disconnect ─────────────────────────────────────────────
 
     /**

@@ -1,6 +1,6 @@
 {
   "name": "@pinecall/sdk",
-  "version": "0.2.0",
+  "version": "0.1.0",
   "description": "Build AI voice agents in minutes — TypeScript SDK + CLI for real-time voice over phone, WebRTC, or browser mic.",
   "type": "module",
   "main": "./dist/index.cjs",

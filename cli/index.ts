@@ -27,7 +27,6 @@ const HELP = `
   Environment:
     PINECALL_API_KEY    Your Pinecall API key (required)
     OPENAI_API_KEY      OpenAI key (for agent/dial commands)
-    PINECALL_PHONE      Default phone number
     PINECALL_URL        Server URL (default: wss://voice.pinecall.io/client)
 `;
 

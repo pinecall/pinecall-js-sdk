@@ -6,7 +6,7 @@
  */
 
 import { Pinecall } from "@pinecall/sdk";
-import { resolveEnv } from "../presets.js";
+import { resolveEnv, pickPhone } from "../presets.js";
 
 export async function testCommand(_args: string[]) {
     const env = resolveEnv();
@@ -50,16 +50,25 @@ export async function testCommand(_args: string[]) {
 
     // ── 3. Add phone channel ────────────────────────────────────────────
 
-    agent.addChannel("phone", env.phone);
+    let phone = "";
+    try {
+        phone = await pickPhone(env.apiKey);
+    } catch {
+        checks.push({ label: "Phone channel", ok: false, detail: "no phones found" });
+    }
 
-    // Give it a moment to register
-    await new Promise((r) => setTimeout(r, 1000));
+    if (phone) {
+        agent.addChannel("phone", phone);
 
-    checks.push({
-        label: "Phone channel",
-        ok: true,
-        detail: env.phone,
-    });
+        // Give it a moment to register
+        await new Promise((r) => setTimeout(r, 1000));
+
+        checks.push({
+            label: "Phone channel",
+            ok: true,
+            detail: phone,
+        });
+    }
 
     // ── 4. Fetch voices (REST API) ──────────────────────────────────────
 

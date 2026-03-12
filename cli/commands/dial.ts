@@ -9,8 +9,8 @@
 
 import { Pinecall, type Turn, type Call } from "@pinecall/sdk";
 import OpenAI from "openai";
-import { getPreset, resolveEnv } from "../presets.js";
-import { attachLogger } from "../logger.js";
+import { getPreset, resolveEnv, pickPhone } from "../presets.js";
+import { createUI } from "../ui.js";
 
 export async function dialCommand(args: string[]) {
     // Parse args
@@ -32,17 +32,34 @@ export async function dialCommand(args: string[]) {
 
     const preset = getPreset(lang);
     const env = resolveEnv();
-    from = from || env.phone;
 
     if (!env.openaiKey) {
         console.error("❌ Set OPENAI_API_KEY env var for the dial command");
         process.exit(1);
     }
 
+    // Pick caller ID if not specified via --from
+    if (!from) {
+        from = await pickPhone(env.apiKey);
+    }
+
     const openai = new OpenAI({ apiKey: env.openaiKey });
+    let systemPrompt = preset.system;
     const history: { role: string; content: string }[] = [
-        { role: "system", content: preset.system },
+        { role: "system", content: systemPrompt },
     ];
+
+    // ── UI ───────────────────────────────────────────────────────────────
+
+    const ui = createUI({
+        title: `Dial · ${lang.toUpperCase()}`,
+        subtitle: `Calling ${to} from ${from}`,
+        getInstructions: () => systemPrompt,
+        setInstructions: (prompt) => {
+            systemPrompt = prompt;
+            if (history[0]?.role === "system") history[0].content = prompt;
+        },
+    });
 
     // ── Connection + Agent ──────────────────────────────────────────────
 
@@ -56,7 +73,6 @@ export async function dialCommand(args: string[]) {
     });
 
     agent.addChannel("phone", from);
-    attachLogger(agent);
 
     // ── LLM streaming ────────────────────────────────────────────────────
 
@@ -94,17 +110,24 @@ export async function dialCommand(args: string[]) {
     });
 
     agent.on("call.ended", (_call: Call) => {
-        console.log("\n  📞 Call ended.\n");
         process.exit(0);
     });
 
     // ── Connect + Dial ──────────────────────────────────────────────────
 
-    console.log(`\n  📞 Pinecall Dial · ${lang.toUpperCase()}\n`);
+    ui.header();
 
     await pc.connect();
-    console.log(`  ✅ Connected`);
-    console.log(`  📱 Dialing ${to} from ${from}…\n`);
+    ui.status("Connected", agent.id);
+    ui.status("Dialing", `${to} from ${from}`);
+
+    const voiceParts = preset.voice.split(":");
+    ui.config({
+        stt: `${preset.stt.provider}${preset.stt.model ? ` · ${preset.stt.model}` : ""}`,
+        tts: `${voiceParts[0]} · ${voiceParts[1]?.slice(0, 8)}…`,
+        turn: preset.turnDetection,
+        llm: "gpt-4.1-nano",
+    });
 
     const call = await agent.dial({
         to,
@@ -112,5 +135,6 @@ export async function dialCommand(args: string[]) {
         greeting: preset.greeting,
     });
 
-    console.log(`  🟢 Call connected: ${call.id}\n`);
+    ui.status("Call connected", call.id);
+    ui.attach(agent, call);
 }

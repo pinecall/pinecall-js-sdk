@@ -1,5 +1,9 @@
 <p align="center">
-  <img src="https://pinecall.io/img/logo.png" alt="Pinecall" width="180" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="logo/logo-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="logo/logo-light.png">
+    <img src="logo/logo-dark.png" alt="Pinecall" width="350" />
+  </picture>
 </p>
 
 <h3 align="center">@pinecall/sdk</h3>

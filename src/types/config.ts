@@ -104,9 +104,8 @@ export interface VADConfig {
 // ─── Turn Detection ──────────────────────────────────────────────────────
 
 export interface TurnDetectionConfig {
-    mode?: "smart_turn" | "ultravad" | "native" | "silence";
+    mode?: "smart_turn" | "native" | "silence";
     smart_turn_threshold?: number;
-    ultravad_threshold?: number;
     native_silence_ms?: number;
     max_silence_seconds?: number;
 }
