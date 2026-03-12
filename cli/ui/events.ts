@@ -103,15 +103,31 @@ export function attachEvents(
     });
 
     // ── Bot events ──
-    agent.on("bot.speaking", (e, _call: Call) => {
-        logLine(`${ts()} ${BRAND("bot")} ${e.text}`);
+    let botMsgId = "";
+
+    agent.on("bot.word", (e, _call: Call) => {
+        if (e.message_id !== botMsgId) {
+            // New message — start a fresh line with prefix
+            botMsgId = e.message_id;
+            write(`  ${BAR} ${ts()} ${BRAND("bot")} ${e.word}`);
+        } else {
+            write(` ${e.word}`);
+        }
     });
 
     agent.on("bot.finished", (e, _call: Call) => {
+        if (botMsgId) {
+            write("\n");
+            botMsgId = "";
+        }
         logLine(`${ts()} ${DIM("bot.finished")} ${dur(e.duration_ms)}`);
     });
 
     agent.on("bot.interrupted", (e, _call: Call) => {
+        if (botMsgId) {
+            write(` ${WARN("[interrupted]")}\n`);
+            botMsgId = "";
+        }
         logLine(`${ts()} ${WARN("interrupted")} ${DIM(`after ${e.words_spoken} words`)}`);
     });
 

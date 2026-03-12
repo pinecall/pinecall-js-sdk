@@ -47,12 +47,42 @@ export OPENAI_API_KEY=sk-...     # for agent/dial commands
 pinecall agent                    # Start an inbound voice agent
 pinecall agent --es               # Start in Spanish
 pinecall dial +14155551234        # Make an outbound call
+pinecall run agent.js             # Run a custom GPTAgent file
 pinecall voices                   # List available voices
 pinecall phones                   # List your phone numbers
 pinecall test                     # Smoke test (connect + APIs)
 ```
 
-### SDK (build your own)
+### GPTAgent (recommended)
+
+Define your agent as a class — zero boilerplate:
+
+```javascript
+// agent.js
+import { GPTAgent, Phone } from "@pinecall/sdk/ai";
+
+class USPhone extends Phone {
+    number = "+13186330963";
+    stt = { provider: "deepgram-flux", language: "en" };
+    turnDetection = "native";
+}
+
+class MyAgent extends GPTAgent {
+    model = "gpt-4.1-nano";
+    voice = "elevenlabs:EXAVITQu4vr4xnSDxMaL";
+    phone = new USPhone();
+    instructions = "You are a helpful voice assistant. Be concise.";
+    greeting = "Hey! How can I help you?";
+}
+
+export default MyAgent;
+```
+
+```bash
+pinecall run agent.js
+```
+
+### SDK (low-level, full control)
 
 ```typescript
 import { Pinecall } from "@pinecall/sdk";
@@ -94,6 +124,7 @@ The CLI is included with the SDK — install once, use anywhere.
 |---|---|
 | `pinecall agent [--es\|--lang=xx]` | Start an inbound voice agent (OpenAI) |
 | `pinecall dial <number> [--from=xx] [--es]` | Make an outbound call |
+| `pinecall run <agent.js>` | Run a custom GPTAgent class file |
 | `pinecall test` | Smoke test (WebSocket + REST APIs) |
 | `pinecall voices [--provider=xx]` | List available TTS voices |
 | `pinecall phones` | List your phone numbers |
@@ -119,6 +150,219 @@ While a call is active, type these in the terminal:
 | `PINECALL_API_KEY` | **Yes** | Your Pinecall API key (`pk_...`) |
 | `OPENAI_API_KEY` | For agent/dial | OpenAI API key |
 | `PINECALL_URL` | No | Server URL (default: `wss://voice.pinecall.io/client`) |
+
+---
+
+## GPTAgent (`@pinecall/sdk/ai`)
+
+A high-level class-based abstraction that wires together Pinecall + OpenAI + conversation history + tool calling. Separate subpath — `openai` is an optional peer dependency.
+
+```bash
+npm install openai    # required only for GPTAgent
+```
+
+### Agent Config
+
+All config is set via class fields:
+
+```javascript
+import { GPTAgent, Phone } from "@pinecall/sdk/ai";
+
+class MyAgent extends GPTAgent {
+    model = "gpt-4.1-nano";         // OpenAI model
+    voice = "elevenlabs:voiceId";    // TTS voice
+    language = "en";                 // Language code
+    stt = { provider: "deepgram-flux" };
+    turnDetection = "native";        // Turn detection mode
+    interruption = true;             // Allow barge-in
+    temperature = 0.7;               // LLM temperature
+    maxTokens = 150;                 // Max response tokens
+    turnEvent = "eager.turn";        // "eager.turn" or "turn.end"
+    instructions = "You are helpful.";
+    greeting = "Hello!";
+    phone = "+13186330963";          // or Phone instance(s)
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `model` | string | `"gpt-4.1-nano"` | OpenAI model |
+| `voice` | string | — | Voice shortcut (`"elevenlabs:id"`) |
+| `language` | string | — | Language code |
+| `stt` | string/object | — | STT config |
+| `turnDetection` | string | `"smart_turn"` | Turn detection mode |
+| `interruption` | boolean | `true` | Allow barge-in |
+| `instructions` | string | `"You are a helpful voice assistant."` | System prompt |
+| `greeting` | string | — | Auto-say on call start |
+| `turnEvent` | string | `"eager.turn"` | Which turn event triggers the LLM |
+| `temperature` | number | — | LLM temperature |
+| `maxTokens` | number | — | Max response tokens |
+| `phone` | string/Phone/array | — | Phone channel(s) |
+| `channels` | Channel[] | — | Additional channels (WebRTC, etc.) |
+
+### Phone & Channel Classes
+
+Declare reusable, per-channel config as classes:
+
+```javascript
+import { Phone, WebRTC } from "@pinecall/sdk/ai";
+
+// Phone with Flux STT (English, lowest latency)
+class FluxPhone extends Phone {
+    number = "+13186330963";
+    stt = { provider: "deepgram-flux", language: "en" };
+    turnDetection = "native";
+}
+
+// Phone with Nova-3 STT (Spanish)
+class SpanishPhone extends Phone {
+    number = "+34607123456";
+    language = "es";
+    stt = { provider: "deepgram", model: "nova-3", language: "es" };
+    turnDetection = "smart_turn";
+}
+
+class MyAgent extends GPTAgent {
+    phone = [new FluxPhone(), new SpanishPhone()];  // multiple phones
+    channels = [new WebRTC()];                       // + WebRTC
+}
+```
+
+**Channel fields:** `voice`, `language`, `stt`, `turnDetection`, `interruption`
+
+You can also use inline constructors:
+
+```javascript
+phone = new Phone("+13186330963", { stt: { provider: "deepgram-flux" } });
+```
+
+### Tool Calling
+
+Tools are class methods. Register schemas with `defineTool()`:
+
+```javascript
+class Receptionist extends GPTAgent {
+    model = "gpt-4.1-nano";
+    voice = "elevenlabs:EXAVITQu4vr4xnSDxMaL";
+    phone = "+13186330963";
+    instructions = "You are a restaurant receptionist.";
+    greeting = "Welcome! How can I help?";
+
+    async bookReservation({ date, time, guests, name }) {
+        const result = await bookingAPI.create({ date, time, guests, name });
+        return { confirmed: true, id: result.id };
+    }
+
+    async checkAvailability({ date, time }) {
+        return await bookingAPI.check({ date, time });
+    }
+}
+
+Receptionist.defineTool("bookReservation", "Book a table", {
+    date:   { type: "string", description: "Date (YYYY-MM-DD)" },
+    time:   { type: "string", description: "Time (HH:MM)" },
+    guests: { type: "number", description: "Party size" },
+    name:   { type: "string", description: "Name for reservation" },
+});
+
+Receptionist.defineTool("checkAvailability", "Check table availability", {
+    date: { type: "string", description: "Date (YYYY-MM-DD)" },
+    time: { type: "string", description: "Time (HH:MM)" },
+});
+
+export default Receptionist;
+```
+
+### Custom LLM / No OpenAI
+
+Override `onTurn()` to use any LLM or skip AI entirely:
+
+```javascript
+class SimpleBot extends GPTAgent {
+    phone = "+13186330963";
+    greeting = "Hello!";
+
+    async onTurn(turn, call, history) {
+        // Use your own LLM
+        const reply = await myLLM.generate(history.toMessages());
+        call.reply(reply);
+    }
+}
+```
+
+### Raw Event Access
+
+GPTAgent does **not** replace `agent.on()`. Access the underlying Agent for raw events:
+
+```javascript
+const bot = new MyAgent({ apiKey: "pk_..." });
+bot.agent.on("user.message", (event) => console.log("User said:", event.text));
+bot.agent.on("bot.interrupted", (event) => console.log("Interrupted!"));
+await bot.start();
+```
+
+### Running GPTAgent
+
+```javascript
+// Programmatic
+const agent = new MyAgent({ apiKey: "pk_..." });
+await agent.start();
+
+// Outbound call
+const call = await agent.dial({ to: "+14155551234", from: "+13186330963" });
+
+// Shutdown
+await agent.stop();
+```
+
+---
+
+## ConversationHistory
+
+Tracks messages with automatic interruption handling. Part of the core SDK (no OpenAI dependency).
+
+```typescript
+import { ConversationHistory } from "@pinecall/sdk";
+
+// Auto-wire to a Call (recommended)
+const history = ConversationHistory.forCall(call, "You are helpful.");
+
+// Or manual
+const history = new ConversationHistory();
+history.addSystem("You are helpful.");
+history.addUser("Hello", "msg_1");
+history.addAssistant("Hi there!", "msg_2");
+
+// Get messages in OpenAI format
+const messages = history.toMessages();
+// [{ role: "system", content: "..." }, { role: "user", content: "..." }, ...]
+```
+
+### Interruption Handling
+
+When auto-wired via `forCall()`, history automatically handles:
+
+| Event | Action |
+|-------|--------|
+| `user.message` | `addUser(text, messageId)` |
+| `bot.speaking` | Track pending bot text |
+| `bot.finished` | `addAssistant(text, messageId)` |
+| `bot.interrupted` reason=`"user_spoke"` | Add with `[interrupted]` marker |
+| `bot.interrupted` reason=`"continuation"` | Discard entirely |
+| `turn.continued` | Remove last user entry (will be re-sent) |
+
+### Extensibility
+
+```typescript
+// Hook into every mutation (for persistence, logging, etc.)
+history.onUpdate = (messages) => {
+    db.save("conversation", messages);
+};
+
+// Serialize / restore
+const json = history.toJSON();
+const restored = ConversationHistory.fromJSON(json);
+```
 
 ---
 

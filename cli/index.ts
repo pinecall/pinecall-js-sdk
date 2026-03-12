@@ -40,6 +40,7 @@ const HELP = `
     ${chalk.dim("$")} pinecall voices --provider=cartesia
     ${chalk.dim("$")} pinecall phones
     ${chalk.dim("$")} pinecall test
+    ${chalk.dim("$")} pinecall run agent.js --phone +13186330963
 `;
 
 async function main(): Promise<void> {
@@ -61,6 +62,9 @@ async function main(): Promise<void> {
 
         case "phones":
             return (await import("./commands/phones.js")).default(argv);
+
+        case "run":
+            return (await import("./commands/run.js")).run(argv);
 
         case "help":
         case "--help":
