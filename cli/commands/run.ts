@@ -62,7 +62,7 @@ export async function run(argv: string[]): Promise<void> {
 
     if (phoneArg) {
         agent.addPhone(phoneArg);
-    } else if (!dialTo && !agent.phone) {
+    } else if (!dialTo && !agent.phone && !agent.phones?.length) {
         // Interactive phone picker only if no phone is set anywhere
         const phones = await agent.pinecall.fetchPhones();
         const phone = await pickPhone(phones);

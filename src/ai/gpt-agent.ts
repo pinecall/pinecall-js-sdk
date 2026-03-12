@@ -33,10 +33,10 @@
 
 import OpenAI from "openai";
 import { Pinecall } from "../client.js";
-import { Agent, type AgentConfig, type ChannelConfig } from "../agent.js";
+import { Agent, type AgentConfig, type ChannelConfig, type VoiceShortcut } from "../agent.js";
 import { Call, type Turn } from "../call.js";
 import { ConversationHistory } from "../history.js";
-import { Channel, Phone } from "./channel.js";
+import { Channel, Phone, WebRTC } from "./channel.js";
 
 // ─── Types ───────────────────────────────────────────────────────────────
 
@@ -63,8 +63,8 @@ export class GPTAgent {
 
     /** OpenAI model. Default: "gpt-4.1-nano". */
     model = "gpt-4.1-nano";
-    /** Voice shortcut (e.g. "elevenlabs:voiceId"). */
-    voice?: string;
+    /** Voice — string shortcut or full TTS config object. */
+    voice?: VoiceShortcut;
     /** Language code (e.g. "es"). */
     language?: string;
     /** STT config. */
@@ -83,16 +83,30 @@ export class GPTAgent {
     temperature?: number;
     /** Max response tokens. */
     maxTokens?: number;
+
+    // ── Channel fields ───────────────────────────────────────────────────
+
     /**
-     * Phone channel(s). Accepts a string, Phone instance, or array of either.
+     * Agent-level defaults — applied to all channels.
+     * Channels can override any of these per-channel.
      *
      * @example
-     * phone = "+13186330963";
-     * phone = new Phone("+13186330963", { stt: { provider: "deepgram-flux" } });
-     * phone = [new USPhone(), new UKPhone()];
+     * defaults = {
+     *   voice: { provider: "elevenlabs", voice_id: "abc", speed: 1.05 },
+     *   stt: { provider: "deepgram", model: "nova-3" },
+     *   turnDetection: "smart_turn",
+     *   interruption: { enabled: true, min_duration_ms: 300 },
+     * };
      */
-    phone?: string | Phone | (string | Phone)[];
-    /** Additional channels (WebRTC, etc). */
+    defaults?: Partial<ChannelConfig>;
+
+    /** Single phone — string or Phone instance. */
+    phone?: string | Phone;
+    /** Multiple phones. */
+    phones?: (string | Phone)[];
+    /** WebRTC channel. */
+    webrtc?: WebRTC;
+    /** Additional channels (generic). */
     channels?: Channel[];
 
     // ── Internal ─────────────────────────────────────────────────────────
@@ -160,8 +174,19 @@ export class GPTAgent {
             apiKey: opts.openaiKey ?? process.env.OPENAI_API_KEY,
         });
 
-        // Build agent config from class fields
+        // Build agent config from defaults + class fields
         const agentConfig: AgentConfig = {};
+
+        // Apply defaults first
+        if (this.defaults) {
+            if (this.defaults.voice) agentConfig.voice = this.defaults.voice;
+            if (this.defaults.language) agentConfig.language = this.defaults.language;
+            if (this.defaults.stt) agentConfig.stt = this.defaults.stt;
+            if (this.defaults.turnDetection) agentConfig.turnDetection = this.defaults.turnDetection;
+            if (this.defaults.interruption !== undefined) agentConfig.interruption = this.defaults.interruption;
+        }
+
+        // Class fields override defaults
         if (this.voice) agentConfig.voice = this.voice;
         if (this.language) agentConfig.language = this.language;
         if (this.stt) agentConfig.stt = this.stt;
@@ -188,20 +213,27 @@ export class GPTAgent {
 
     /** Connect and start listening. */
     async start(): Promise<void> {
-        // Auto-add phone channels from class property
-        if (this.phone) {
-            const phones = Array.isArray(this.phone) ? this.phone : [this.phone];
-            for (const p of phones) {
-                if (typeof p === "string") {
-                    this._agent.addChannel("phone", p);
-                } else {
-                    const config = p.toConfig();
-                    this._agent.addChannel("phone", p.number, Object.keys(config).length > 0 ? config : undefined);
-                }
+        // Collect all phones from phone + phones
+        const allPhones: (string | Phone)[] = [];
+        if (this.phone) allPhones.push(...(Array.isArray(this.phone) ? this.phone : [this.phone]));
+        if (this.phones) allPhones.push(...this.phones);
+
+        for (const p of allPhones) {
+            if (typeof p === "string") {
+                this._agent.addChannel("phone", p);
+            } else {
+                const config = p.toConfig();
+                this._agent.addChannel("phone", p.number, Object.keys(config).length > 0 ? config : undefined);
             }
         }
 
-        // Auto-add other channels
+        // Auto-add WebRTC channel
+        if (this.webrtc) {
+            const config = this.webrtc.toConfig();
+            this._agent.addChannel("webrtc", undefined, Object.keys(config).length > 0 ? config : undefined);
+        }
+
+        // Auto-add generic channels
         if (this.channels) {
             for (const ch of this.channels) {
                 const config = ch.toConfig();

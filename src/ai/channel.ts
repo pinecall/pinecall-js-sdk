@@ -1,24 +1,28 @@
 /**
  * Channel — declarative config container for audio channels.
  *
- * Subclass to define reusable channel configurations.
+ * Subclass to define reusable channel configurations,
+ * or use constructors for inline config.
  *
  * @example
  * ```javascript
- * class USPhone extends Phone {
+ * // Subclass for reusable configs
+ * class SpanishPhone extends Phone {
  *   number = "+13186330963";
- *   stt = {
- *     provider: "deepgram-flux",
- *     language: "en",
- *     keyterms: ["Pinecall", "GPTAgent"],
+ *   voice = {
+ *     provider: "elevenlabs",
+ *     voice_id: "VmejBeYhbrcTPwDniox7",
+ *     speed: 1.05,
+ *     stability: 0.55,
  *   };
- *   turnDetection = "native";
- *   interruption = {
- *     enabled: true,
- *     energy_threshold_db: -35.0,
- *     min_duration_ms: 300,
- *   };
+ *   stt = { provider: "deepgram", model: "nova-3", language: "es" };
+ *   turnDetection = "smart_turn";
+ *   interruption = { enabled: true, min_duration_ms: 300 };
  * }
+ *
+ * // Or inline via constructor
+ * const phone = new Phone("+13186330963", spanishDefaults);
+ * const webrtc = new WebRTC(spanishDefaults);
  * ```
  */
 
@@ -31,32 +35,74 @@ export class Channel {
     /** Channel type. */
     readonly type: "phone" | "webrtc" | "mic" = "phone";
 
-    // ── Shortcut fields ─────────────────────────────────────────────────
+    // ── Config fields ───────────────────────────────────────────────────
 
-    /** Voice shortcut — e.g. "elevenlabs:voiceId" */
+    /**
+     * Voice / TTS config.
+     *
+     * String shortcut: "elevenlabs:voiceId"
+     * Full object: { provider, voice_id, speed, stability, similarity_boost, ... }
+     *
+     * @example
+     * voice = "elevenlabs:EXAVITQu4vr4xnSDxMaL";
+     * voice = {
+     *   provider: "elevenlabs",
+     *   voice_id: "EXAVITQu4vr4xnSDxMaL",
+     *   model: "eleven_flash_v2_5",
+     *   speed: 1.05,
+     *   stability: 0.55,
+     *   similarity_boost: 0.8,
+     * };
+     */
     voice?: VoiceShortcut;
+
     /** Language code — sets stt + tts language. */
     language?: string;
-    /** STT config — string ("deepgram") or full object. */
-    stt?: ChannelConfig["stt"];
-    /** Turn detection — string ("smart_turn") or full object. */
-    turnDetection?: ChannelConfig["turnDetection"];
+
     /**
-     * Interruption config — false to disable, or full object:
-     *   { enabled: true, energy_threshold_db: -35.0, min_duration_ms: 300 }
+     * STT config — string shortcut or full object.
+     *
+     * @example
+     * stt = "deepgram";
+     * stt = {
+     *   provider: "deepgram",
+     *   model: "nova-3",
+     *   language: "es",
+     *   keywords: ["Pinecall"],
+     *   keyterms: ["GPT Agent"],
+     * };
+     * stt = {
+     *   provider: "deepgram-flux",
+     *   eot_threshold: 0.7,
+     *   eager_eot_threshold: 0.5,
+     * };
+     */
+    stt?: ChannelConfig["stt"];
+
+    /** Turn detection — "smart_turn", "native", "silence", or full object. */
+    turnDetection?: ChannelConfig["turnDetection"];
+
+    /**
+     * Interruption / barge-in config.
+     *
+     * @example
+     * interruption = false;               // disable completely
+     * interruption = {
+     *   enabled: true,
+     *   energy_threshold_db: -35.0,       // min audio energy (dB)
+     *   min_duration_ms: 300,             // min speech before interrupting
+     * };
      */
     interruption?: ChannelConfig["interruption"];
 
-    // ── Raw session config (for advanced TTS, VAD, etc.) ────────────────
-
     /**
-     * Full session config for anything not covered by shortcuts.
-     * Allows setting TTS speed/stability, VAD thresholds, speaker filter, etc.
+     * Raw session config — for anything not covered by shortcuts.
+     * Use for VAD tuning, speaker filter, analysis, etc.
      *
      * @example
      * config = {
-     *   tts: { provider: "elevenlabs", voice_id: "abc", speed: 1.1, stability: 0.6 },
      *   vad: { threshold: 0.4, min_speech_ms: 200 },
+     *   speaker_filter: { enabled: true },
      * }
      */
     config?: Partial<SessionConfig>;
@@ -74,6 +120,18 @@ export class Channel {
         if (this.config) cfg.config = this.config;
         return cfg;
     }
+
+    // ── Apply overrides from object ────────────────────────────────────
+
+    /** @internal Apply config overrides from a plain object. */
+    protected _applyOverrides(overrides: Partial<ChannelConfig>): void {
+        if (overrides.voice) this.voice = overrides.voice;
+        if (overrides.language) this.language = overrides.language;
+        if (overrides.stt) this.stt = overrides.stt;
+        if (overrides.turnDetection) this.turnDetection = overrides.turnDetection;
+        if (overrides.interruption !== undefined) this.interruption = overrides.interruption;
+        if (overrides.config) this.config = overrides.config;
+    }
 }
 
 // ─── Phone ───────────────────────────────────────────────────────────────
@@ -87,14 +145,7 @@ export class Phone extends Channel {
     constructor(number?: string, overrides?: Partial<ChannelConfig>) {
         super();
         if (number) this.number = number;
-        if (overrides) {
-            if (overrides.voice) this.voice = overrides.voice;
-            if (overrides.language) this.language = overrides.language;
-            if (overrides.stt) this.stt = overrides.stt;
-            if (overrides.turnDetection) this.turnDetection = overrides.turnDetection;
-            if (overrides.interruption !== undefined) this.interruption = overrides.interruption;
-            if (overrides.config) this.config = overrides.config;
-        }
+        if (overrides) this._applyOverrides(overrides);
     }
 }
 
@@ -102,4 +153,9 @@ export class Phone extends Channel {
 
 export class WebRTC extends Channel {
     override readonly type = "webrtc" as const;
+
+    constructor(overrides?: Partial<ChannelConfig>) {
+        super();
+        if (overrides) this._applyOverrides(overrides);
+    }
 }

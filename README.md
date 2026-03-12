@@ -166,39 +166,72 @@ npm install openai    # required only for GPTAgent
 All config is set via class fields:
 
 ```javascript
-import { GPTAgent, Phone } from "@pinecall/sdk/ai";
+import { GPTAgent, Phone, WebRTC } from "@pinecall/sdk/ai";
 
 class MyAgent extends GPTAgent {
-    model = "gpt-4.1-nano";         // OpenAI model
-    voice = "elevenlabs:voiceId";    // TTS voice
-    language = "en";                 // Language code
-    stt = { provider: "deepgram-flux" };
-    turnDetection = "native";        // Turn detection mode
-    interruption = true;             // Allow barge-in
-    temperature = 0.7;               // LLM temperature
-    maxTokens = 150;                 // Max response tokens
-    turnEvent = "eager.turn";        // "eager.turn" or "turn.end"
+    // ── LLM ──
+    model = "gpt-4.1-nano";
     instructions = "You are helpful.";
     greeting = "Hello!";
-    phone = "+13186330963";          // or Phone instance(s)
+    temperature = 0.7;
+    maxTokens = 150;
+    turnEvent = "eager.turn";        // "eager.turn" or "turn.end"
+
+    // ── Voice / TTS (string shortcut OR full config) ──
+    voice = "elevenlabs:EXAVITQu4vr4xnSDxMaL";
+    // or full config for speed/stability:
+    // voice = {
+    //     provider: "elevenlabs",
+    //     voice_id: "EXAVITQu4vr4xnSDxMaL",
+    //     speed: 1.05,
+    //     stability: 0.55,
+    //     similarity_boost: 0.8,
+    // };
+
+    // ── STT (with keyterms, model, etc.) ──
+    stt = {
+        provider: "deepgram",
+        model: "nova-3",
+        language: "es",
+        keywords: ["Pinecall"],
+        keyterms: ["GPT Agent"],
+    };
+
+    // ── Turn detection ──
+    turnDetection = "smart_turn";
+
+    // ── Interruption / barge-in ──
+    interruption = {
+        enabled: true,
+        energy_threshold_db: -35.0,  // min audio energy (dB)
+        min_duration_ms: 300,        // min speech before interrupting
+    };
+
+    // ── Channels ──
+    phone = "+13186330963";
+    // phones = [new USPhone(), new ESPhone()];
+    // webrtc = new WebRTC();
 }
 ```
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `model` | string | `"gpt-4.1-nano"` | OpenAI model |
-| `voice` | string | — | Voice shortcut (`"elevenlabs:id"`) |
+| `voice` | string/object | — | Voice shortcut or full TTS config |
 | `language` | string | — | Language code |
-| `stt` | string/object | — | STT config |
-| `turnDetection` | string | `"smart_turn"` | Turn detection mode |
-| `interruption` | boolean | `true` | Allow barge-in |
+| `stt` | string/object | — | STT config (provider, model, keywords...) |
+| `turnDetection` | string/object | — | Turn detection mode or full config |
+| `interruption` | boolean/object | — | `false` to disable, or `{ energy_threshold_db, min_duration_ms }` |
 | `instructions` | string | `"You are a helpful voice assistant."` | System prompt |
 | `greeting` | string | — | Auto-say on call start |
 | `turnEvent` | string | `"eager.turn"` | Which turn event triggers the LLM |
 | `temperature` | number | — | LLM temperature |
 | `maxTokens` | number | — | Max response tokens |
-| `phone` | string/Phone/array | — | Phone channel(s) |
-| `channels` | Channel[] | — | Additional channels (WebRTC, etc.) |
+| `defaults` | object | — | Agent-level defaults (apply to all channels) |
+| `phone` | string/Phone | — | Single phone channel |
+| `phones` | (string/Phone)[] | — | Multiple phone channels |
+| `webrtc` | WebRTC | — | WebRTC channel |
+| `channels` | Channel[] | — | Additional channels (generic) |
 
 ### Phone & Channel Classes
 
@@ -207,33 +240,74 @@ Declare reusable, per-channel config as classes:
 ```javascript
 import { Phone, WebRTC } from "@pinecall/sdk/ai";
 
-// Phone with Flux STT (English, lowest latency)
-class FluxPhone extends Phone {
+// Phone with full TTS config + STT keyterms
+class USPhone extends Phone {
     number = "+13186330963";
-    stt = { provider: "deepgram-flux", language: "en" };
+    voice = {
+        provider: "elevenlabs",
+        voice_id: "EXAVITQu4vr4xnSDxMaL",
+        speed: 1.0,
+        stability: 0.5,
+    };
+    stt = {
+        provider: "deepgram-flux",
+        language: "en",
+        eot_threshold: 0.7,
+    };
     turnDetection = "native";
+    interruption = { enabled: true, min_duration_ms: 300 };
 }
 
-// Phone with Nova-3 STT (Spanish)
-class SpanishPhone extends Phone {
+// Phone for Spanish
+class ESPhone extends Phone {
     number = "+34607123456";
     language = "es";
-    stt = { provider: "deepgram", model: "nova-3", language: "es" };
+    voice = {
+        provider: "elevenlabs",
+        voice_id: "VmejBeYhbrcTPwDniox7",
+        speed: 1.05,
+        stability: 0.55,
+    };
+    stt = { provider: "deepgram", model: "nova-3", language: "es", keywords: ["Pinecall"] };
     turnDetection = "smart_turn";
 }
 
 class MyAgent extends GPTAgent {
-    phone = [new FluxPhone(), new SpanishPhone()];  // multiple phones
-    channels = [new WebRTC()];                       // + WebRTC
+    model = "gpt-4.1-nano";
+    phones = [new USPhone(), new ESPhone()];  // multiple phones
+    webrtc = new WebRTC();                     // WebRTC channel
+    instructions = "You are helpful.";
 }
 ```
 
-**Channel fields:** `voice`, `language`, `stt`, `turnDetection`, `interruption`
+**Channel fields:** `voice`, `language`, `stt`, `turnDetection`, `interruption`, `config`
 
-You can also use inline constructors:
+### Shared Defaults
+
+Use `defaults` for agent-level config that applies to all channels:
 
 ```javascript
-phone = new Phone("+13186330963", { stt: { provider: "deepgram-flux" } });
+class MyAgent extends GPTAgent {
+    defaults = {
+        voice: { provider: "elevenlabs", voice_id: "abc", speed: 1.05 },
+        stt: { provider: "deepgram", model: "nova-3" },
+        turnDetection: "smart_turn",
+        interruption: { enabled: true, min_duration_ms: 300 },
+    };
+    phones = [new Phone("+13186330963"), new Phone("+34607123456")];
+    webrtc = new WebRTC();
+}
+```
+
+Or share config across Phone + WebRTC via constructor:
+
+```javascript
+const sharedConfig = {
+    voice: { provider: "elevenlabs", voice_id: "abc", speed: 1.05 },
+    stt: { provider: "deepgram", model: "nova-3" },
+};
+phones = [new Phone("+13186330963", sharedConfig)];
+webrtc = new WebRTC(sharedConfig);
 ```
 
 ### Tool Calling
