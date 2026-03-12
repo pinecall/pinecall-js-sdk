@@ -1,59 +1,62 @@
 /**
- * `pinecall voices` — List available TTS voices.
+ * pinecall voices — list available TTS voices.
  *
- * Usage:
- *   pinecall voices                        # ElevenLabs (default)
- *   pinecall voices --provider=cartesia    # Cartesia
- *   pinecall voices --lang=es             # Filter by language
+ * Multi-provider support with dynamic terminal width.
  */
 
-import { Pinecall } from "@pinecall/sdk";
+import { fetchVoices, type Voice } from "@pinecall/sdk";
+import { parseArgs } from "../lib/args.js";
+import { printHeader, writeln, logLine } from "../ui/renderer.js";
+import { ACCENT, MUTED, DIM, OK } from "../ui/theme.js";
 
-export async function voicesCommand(args: string[]) {
-    let provider = "elevenlabs";
-    let language = "";
+export default async function voices(argv: string[]): Promise<void> {
+    const args = parseArgs(argv, {
+        values: ["--provider", "--lang"],
+    });
 
-    for (const arg of args) {
-        if (arg.startsWith("--provider=")) provider = arg.split("=")[1];
-        else if (arg.startsWith("--lang=")) language = arg.split("=")[1];
+    const provider = args.values.get("--provider") ?? "elevenlabs";
+    const language = args.values.get("--lang");
+
+    printHeader(`Voices — ${provider}`);
+
+    const voiceList = await fetchVoices({ provider, language });
+
+    if (voiceList.length === 0) {
+        logLine(`${DIM("No voices found")}`);
+        return;
     }
 
-    console.log(`\n  🎤 Fetching ${provider} voices${language ? ` (${language})` : ""}…\n`);
+    // ── Table layout ──
+    const termWidth = Math.min(process.stdout.columns || 120, 120);
+    const colId = 32;
+    const colName = 24;
+    const colGender = 8;
+    const colLangs = Math.max(termWidth - colId - colName - colGender - 16, 20);
 
-    try {
-        const voices = await Pinecall.fetchVoices({ provider, language: language || undefined });
+    // Header
+    writeln("");
+    writeln(
+        `  ${MUTED("ID".padEnd(colId))} ` +
+        `${MUTED("Name".padEnd(colName))} ` +
+        `${MUTED("Gender".padEnd(colGender))} ` +
+        `${MUTED("Languages")}`,
+    );
+    writeln(`  ${MUTED("─".repeat(Math.min(termWidth - 4, 116)))}`);
 
-        if (voices.length === 0) {
-            console.log("  No voices found.\n");
-            return;
-        }
+    // Rows
+    for (const v of voiceList) {
+        const langs = v.languages.map((l) => l.code).join(", ");
+        const gender = v.gender ?? "";
 
-        // Table header
-        console.log(
-            "  " +
-            "Name".padEnd(45) +
-            "ID".padEnd(28) +
-            "Gender".padEnd(10) +
-            "Languages",
+        writeln(
+            `  ${ACCENT(v.id.padEnd(colId))} ` +
+            `${v.name.padEnd(colName)} ` +
+            `${DIM(gender.padEnd(colGender))} ` +
+            `${DIM(langs.length > colLangs ? langs.slice(0, colLangs - 1) + "…" : langs)}`,
         );
-        console.log("  " + "─".repeat(100));
-
-        for (const v of voices) {
-            const langs = (v as any).languages
-                ?.map((l: any) => `${l.flag || ""} ${l.code}`)
-                .join(", ") ?? "";
-            console.log(
-                "  " +
-                (v.name || "").slice(0, 44).padEnd(45) +
-                v.id.slice(0, 27).padEnd(28) +
-                ((v as any).gender || "").padEnd(10) +
-                langs.slice(0, 40),
-            );
-        }
-
-        console.log(`\n  ${voices.length} voices total\n`);
-    } catch (err: any) {
-        console.error(`  ❌ Failed: ${err.message}\n`);
-        process.exit(1);
     }
+
+    writeln("");
+    writeln(`  ${OK(`${voiceList.length} voices`)} ${DIM(`(${provider})`)}`);
+    writeln("");
 }

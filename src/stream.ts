@@ -18,6 +18,8 @@ export interface ReplyStreamOptions {
     messageId?: string;
     inReplyTo: string;
     send: (data: Record<string, unknown>) => void;
+    /** Called when the stream ends or is aborted — for cleanup. */
+    onComplete?: () => void;
 }
 
 export class ReplyStream {
@@ -33,11 +35,14 @@ export class ReplyStream {
     // AbortController for external cancellation
     private _ac = new AbortController();
 
+    private _onComplete?: () => void;
+
     constructor(opts: ReplyStreamOptions) {
         this.messageId = opts.messageId ?? generateId("msg");
         this.callId = opts.callId;
         this._inReplyTo = opts.inReplyTo;
         this._send = opts.send;
+        this._onComplete = opts.onComplete;
     }
 
     /** True if the stream was aborted (e.g. turn.continued). */
@@ -86,6 +91,7 @@ export class ReplyStream {
     end(): void {
         if (this._aborted || this._ended) return;
         this._ended = true;
+        this._fireComplete();
 
         // If we never wrote anything, send start+end so server knows
         if (!this._started) {
@@ -112,6 +118,15 @@ export class ReplyStream {
         if (this._aborted) return;
         this._aborted = true;
         this._ended = true;
+        this._fireComplete();
         this._ac.abort();
+    }
+
+    private _fireComplete(): void {
+        if (this._onComplete) {
+            const cb = this._onComplete;
+            this._onComplete = undefined;
+            cb();
+        }
     }
 }

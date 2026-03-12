@@ -22,6 +22,8 @@
 
 import { TypedEmitter } from "./utils/emitter.js";
 import { Call, type Turn } from "./call.js";
+import { forwardCallEvents } from "./utils/proxy.js";
+import { buildShortcutPayload } from "./utils/protocol.js";
 import type { SessionConfig } from "./types/config.js";
 import type {
     CallStartedEvent,
@@ -165,6 +167,11 @@ export class Agent extends TypedEmitter<AgentEvents> {
         return this._calls.get(callId);
     }
 
+    /** Get the current agent config. */
+    getConfig(): AgentConfig {
+        return this._config;
+    }
+
     // ── Channel management ───────────────────────────────────────────────
 
     /**
@@ -264,13 +271,22 @@ export class Agent extends TypedEmitter<AgentEvents> {
         metadata?: Record<string, unknown>;
     }): Promise<Call> {
         return new Promise<Call>((resolve, reject) => {
+            const cleanup = () => {
+                this.off("call.started", onStarted);
+                this.off("error" as any, onError);
+            };
             const onStarted = (call: Call) => {
                 if (call.to === options.to || call.direction === "outbound") {
-                    this.off("call.started", onStarted);
+                    cleanup();
                     resolve(call);
                 }
             };
+            const onError = (err: Error) => {
+                cleanup();
+                reject(err);
+            };
             this.on("call.started", onStarted);
+            this.on("error" as any, onError);
 
             this._send({
                 event: "call.dial",
@@ -282,7 +298,7 @@ export class Agent extends TypedEmitter<AgentEvents> {
             });
 
             setTimeout(() => {
-                this.off("call.started", onStarted);
+                cleanup();
                 reject(new Error("Dial timeout"));
             }, 30000);
         });
@@ -295,9 +311,8 @@ export class Agent extends TypedEmitter<AgentEvents> {
         const eventType = data.event as string;
 
         switch (eventType) {
-            case "call.started":
-            case "session.started": {
-                const callId = (data.call_id ?? data.session_id) as string;
+            case "call.started": {
+                const callId = data.call_id as string;
                 const call = new Call(
                     {
                         call_id: callId,
@@ -314,9 +329,8 @@ export class Agent extends TypedEmitter<AgentEvents> {
                 break;
             }
 
-            case "call.ended":
-            case "session.ended": {
-                const callId = (data.call_id ?? data.session_id) as string;
+            case "call.ended": {
+                const callId = data.call_id as string;
                 const call = this._calls.get(callId);
                 if (call) {
                     call._end(data.reason as string);
@@ -340,12 +354,10 @@ export class Agent extends TypedEmitter<AgentEvents> {
 
             default: {
                 // Route to call
-                const callId = (data.call_id ?? data.session_id) as string;
+                const callId = data.call_id as string;
                 if (callId) {
                     const call = this._calls.get(callId);
-                    if (call) {
-                        call._handleEvent(data);
-                    }
+                    if (call) call._handleEvent(data);
                 }
                 break;
             }
@@ -376,44 +388,11 @@ export class Agent extends TypedEmitter<AgentEvents> {
 
     /** @internal Proxy call events to agent level. */
     private _proxyCallEvents(call: Call): void {
-        call.on("speech.started", (e) => this.emit("speech.started", e, call));
-        call.on("speech.ended", (e) => this.emit("speech.ended", e, call));
-        call.on("user.speaking", (e) => this.emit("user.speaking", e, call));
-        call.on("user.message", (e) => this.emit("user.message", e, call));
-
-        call.on("eager.turn", (turn) => this.emit("eager.turn", turn, call));
-        call.on("turn.pause", (e) => this.emit("turn.pause", e, call));
-        call.on("turn.end", (turn) => this.emit("turn.end", turn, call));
-        call.on("turn.resumed", (e) => this.emit("turn.resumed", e, call));
-        call.on("turn.continued", (e) => this.emit("turn.continued", e, call));
-
-        call.on("bot.speaking", (e) => this.emit("bot.speaking", e, call));
-        call.on("bot.word", (e) => this.emit("bot.word", e, call));
-        call.on("bot.finished", (e) => this.emit("bot.finished", e, call));
-        call.on("bot.interrupted", (e) => this.emit("bot.interrupted", e, call));
-
-        call.on("message.confirmed", (e) => this.emit("message.confirmed", e, call));
-        call.on("reply.rejected", (e) => this.emit("reply.rejected", e, call));
-
-        call.on("audio.metrics", (e) => this.emit("audio.metrics", e, call));
+        forwardCallEvents(call, this, call);
     }
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────
+// ── Re-export ────────────────────────────────────────────────────────────
 
-/** Convert SDK shortcut fields to protocol payload. */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function buildShortcutPayload(opts?: any): Record<string, unknown> {
-    if (!opts) return {};
-    const payload: Record<string, unknown> = {};
-
-    if (opts.voice !== undefined) payload.voice = opts.voice;
-    if (opts.language !== undefined) payload.language = opts.language;
-    if (opts.stt !== undefined) payload.stt = opts.stt;
-    if (opts.turnDetection !== undefined) payload.turn_detection = opts.turnDetection;
-    if (opts.interruption !== undefined) payload.interruption = opts.interruption;
-    if (opts.config !== undefined) payload.config = opts.config;
-    if (opts.mode !== undefined) payload.mode = opts.mode;
-
-    return payload;
-}
+// Re-export for backward compatibility (was originally defined here)
+export { buildShortcutPayload } from "./utils/protocol.js";

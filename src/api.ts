@@ -81,36 +81,25 @@ const DEFAULT_API_URL = "https://app.pinecall.io";
 export async function fetchVoices(opts: FetchVoicesOptions = {}): Promise<Voice[]> {
     const provider = opts.provider ?? "elevenlabs";
     const apiUrl = opts.apiUrl ?? DEFAULT_API_URL;
-
     const url = `${apiUrl}/api/sdk/voices?provider=${encodeURIComponent(provider)}`;
 
-    const res = await fetch(url);
+    let res: Response;
+    try {
+        res = await fetch(url);
+    } catch (err) {
+        throw new Error(`Network error fetching voices: ${err}`);
+    }
+
     if (!res.ok) {
         throw new Error(`Failed to fetch voices: HTTP ${res.status}`);
     }
 
     const data = await res.json();
-
     if (!data.success || !Array.isArray(data.voices)) {
         return [];
     }
 
-    let voices: Voice[] = data.voices.map((v: any) => ({
-        id: v.id ?? v.voice_id ?? "",
-        name: v.name ?? "Unknown",
-        provider,
-        gender: v.gender,
-        style: v.style,
-        languages: Array.isArray(v.languages)
-            ? v.languages.map((l: any) =>
-                typeof l === "string"
-                    ? { code: l, name: l }
-                    : { code: l.code ?? "", name: l.name ?? "", flag: l.flag, nativeName: l.nativeName, region: l.region },
-            )
-            : [],
-        description: v.description,
-        preview_url: v.preview_url,
-    }));
+    let voices: Voice[] = data.voices.map(mapVoice(provider));
 
     // Filter by language if requested
     if (opts.language) {
@@ -134,29 +123,66 @@ export async function fetchVoices(opts: FetchVoicesOptions = {}): Promise<Voice[
  */
 export async function fetchPhones(opts: FetchPhonesOptions): Promise<Phone[]> {
     const apiUrl = opts.apiUrl ?? DEFAULT_API_URL;
-
     const url = `${apiUrl}/api/sdk/phone-numbers`;
 
-    const res = await fetch(url, {
-        headers: { Authorization: `Bearer ${opts.apiKey}` },
-    });
+    let res: Response;
+    try {
+        res = await fetch(url, {
+            headers: { Authorization: `Bearer ${opts.apiKey}` },
+        });
+    } catch (err) {
+        throw new Error(`Network error fetching phone numbers: ${err}`);
+    }
 
     if (!res.ok) {
         throw new Error(`Failed to fetch phone numbers: HTTP ${res.status}`);
     }
 
     const data = await res.json();
-
     if (!data.success) {
         return [];
     }
 
-    const raw: any[] = data.phones ?? data.phoneNumbers ?? [];
+    // Server may return either "phones" or "phoneNumbers" depending on API version
+    const raw: Record<string, unknown>[] = data.phones ?? data.phoneNumbers ?? [];
 
-    return raw.map((p: any) => ({
-        number: p.number ?? "",
-        name: p.name ?? p.number ?? "",
-        sid: p.sid ?? "",
-        isSdk: p.isSdk ?? false,
-    }));
+    return raw.map(mapPhone);
+}
+
+// ─── Typed mappers ───────────────────────────────────────────────────────
+
+function mapVoice(provider: string): (raw: Record<string, unknown>) => Voice {
+    return (v) => ({
+        id: (v.id ?? v.voice_id ?? "") as string,
+        name: (v.name ?? "Unknown") as string,
+        provider,
+        gender: v.gender as string | undefined,
+        style: v.style as string | undefined,
+        languages: Array.isArray(v.languages) ? v.languages.map(mapLanguage) : [],
+        description: v.description as string | undefined,
+        preview_url: v.preview_url as string | undefined,
+    });
+}
+
+function mapLanguage(raw: unknown): VoiceLanguage {
+    if (typeof raw === "string") {
+        return { code: raw, name: raw };
+    }
+    const l = raw as Record<string, unknown>;
+    return {
+        code: (l.code ?? "") as string,
+        name: (l.name ?? "") as string,
+        flag: l.flag as string | undefined,
+        nativeName: l.nativeName as string | undefined,
+        region: l.region as string | undefined,
+    };
+}
+
+function mapPhone(raw: Record<string, unknown>): Phone {
+    return {
+        number: (raw.number ?? "") as string,
+        name: (raw.name ?? raw.number ?? "") as string,
+        sid: (raw.sid ?? "") as string,
+        isSdk: (raw.isSdk ?? false) as boolean,
+    };
 }

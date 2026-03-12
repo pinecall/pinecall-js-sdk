@@ -175,28 +175,9 @@ export class Call extends TypedEmitter<CallEvents> {
             messageId: messageId ?? generateId("msg"),
             inReplyTo,
             send: this._send,
+            onComplete: () => this._activeStreams.delete(stream),
         });
         this._activeStreams.add(stream);
-
-        // Clean up when stream ends
-        const checkCleanup = () => {
-            if (stream.ended || stream.aborted) {
-                this._activeStreams.delete(stream);
-            }
-        };
-
-        // Wrap end/abort to auto-cleanup
-        const origEnd = stream.end.bind(stream);
-        stream.end = () => {
-            origEnd();
-            checkCleanup();
-        };
-        const origAbort = stream.abort.bind(stream);
-        stream.abort = () => {
-            origAbort();
-            checkCleanup();
-        };
-
         return stream;
     }
 
@@ -389,6 +370,8 @@ export class Call extends TypedEmitter<CallEvents> {
         }
         this._activeStreams.clear();
         this.emit("ended", reason);
-        this.removeAllListeners();
+        // Defer listener cleanup to microtask so "ended" handlers can still
+        // interact with the call object (e.g. read state, attach cleanup)
+        queueMicrotask(() => this.removeAllListeners());
     }
 }

@@ -16,9 +16,10 @@
 import { TypedEmitter } from "./utils/emitter.js";
 import { Reconnector, type ReconnectOptions } from "./utils/reconnect.js";
 import { Call, type Turn } from "./call.js";
-import { Agent, buildShortcutPayload } from "./agent.js";
+import { Agent } from "./agent.js";
+import { buildShortcutPayload } from "./utils/protocol.js";
+import { forwardAgentEvents } from "./utils/proxy.js";
 import type { AgentConfig, ChannelConfig, AgentEvents } from "./agent.js";
-import type { SessionConfig } from "./types/config.js";
 import {
     fetchVoices as _fetchVoices,
     fetchPhones as _fetchPhones,
@@ -67,7 +68,7 @@ export interface PinecallEvents {
     reconnecting: (attempt: number) => void;
     error: (error: PinecallError) => void;
 
-    // Agent-level events (for single-agent backward compat)
+    // Agent-level events (proxied for single-agent convenience)
     "call.started": (call: Call) => void;
     "call.ended": (call: Call, reason: string) => void;
     "speech.started": (event: SpeechStartedEvent, call: Call) => void;
@@ -102,25 +103,6 @@ export interface PinecallOptions {
 
     /** Ping interval in ms. Default: 30000. Set 0 to disable. */
     pingInterval?: number;
-
-    /**
-     * Force legacy v1 protocol (single-agent, monolithic register).
-     * When true, Pinecall acts as both connection AND agent.
-     */
-    legacyProtocol?: boolean;
-
-    // ── Legacy single-agent shortcuts (v1 compat) ─────────────────────
-
-    /** @deprecated Use `pc.agent(id, config)` instead. */
-    appId?: string;
-    /** @deprecated Use `pc.agent(id, config)` instead. */
-    agentId?: string;
-    /** @deprecated Use agent shortcuts. */
-    config?: SessionConfig;
-    /** @deprecated Use agent `addChannel()`. */
-    phones?: Record<string, Partial<SessionConfig>>;
-    /** @deprecated Use agent shortcuts. */
-    mode?: "twilio" | "websocket" | "webrtc";
 }
 
 // ─── Error class ─────────────────────────────────────────────────────────
@@ -150,13 +132,8 @@ export class Pinecall extends TypedEmitter<PinecallEvents> {
     private _protocolVersion = "";
     private _connected = false;
 
-    // Multi-agent registry
+    // Agent registry
     private _agents = new Map<string, Agent>();
-
-    // Legacy single-agent compat
-    private _defaultAgent: Agent | null = null;
-    private _calls = new Map<string, Call>();
-    private _appId = "";
 
     // Registration promise
     private _connectResolve: (() => void) | null = null;
@@ -192,21 +169,6 @@ export class Pinecall extends TypedEmitter<PinecallEvents> {
         return this._protocolVersion;
     }
 
-    /** @deprecated Use `agent()` to get agents. */
-    get appId(): string {
-        return this._appId;
-    }
-
-    /** @deprecated Use `agent.call()` or `agent.calls`. */
-    call(callId: string): Call | undefined {
-        return this._calls.get(callId);
-    }
-
-    /** @deprecated Use `agent.calls`. */
-    get calls(): ReadonlyMap<string, Call> {
-        return this._calls;
-    }
-
     /** All agents on this connection. */
     get agents(): ReadonlyMap<string, Agent> {
         return this._agents;
@@ -236,11 +198,7 @@ export class Pinecall extends TypedEmitter<PinecallEvents> {
 
     // ── Connect / Disconnect ─────────────────────────────────────────────
 
-    /**
-     * Connect to the Pinecall server.
-     * For v2: resolves when WebSocket is authenticated.
-     * For legacy: resolves when `registered` is received.
-     */
+    /** Connect to the Pinecall server. Resolves when authenticated. */
     connect(): Promise<void> {
         return new Promise<void>((resolve, reject) => {
             this._connectResolve = resolve;
@@ -265,10 +223,6 @@ export class Pinecall extends TypedEmitter<PinecallEvents> {
         for (const agent of this._agents.values()) {
             agent._endAllCalls("disconnected");
         }
-        for (const call of this._calls.values()) {
-            call._end("disconnected");
-        }
-        this._calls.clear();
         this._connected = false;
     }
 
@@ -286,8 +240,6 @@ export class Pinecall extends TypedEmitter<PinecallEvents> {
      *   language: "es",
      * });
      * sales.addChannel("phone", "+19035551234");
-     * sales.addChannel("webrtc");
-     *
      * sales.on("call.started", (call) => call.say("¡Hola!"));
      */
     agent(id: string, config?: AgentConfig): Agent {
@@ -302,7 +254,7 @@ export class Pinecall extends TypedEmitter<PinecallEvents> {
         this._agents.set(id, agent);
 
         // Proxy agent events to connection level for convenience
-        this._proxyAgentEvents(agent);
+        forwardAgentEvents(agent, this);
 
         // If connected, send agent.create immediately
         if (this._connected) {
@@ -314,66 +266,6 @@ export class Pinecall extends TypedEmitter<PinecallEvents> {
         }
 
         return agent;
-    }
-
-    // ── Legacy compat methods ────────────────────────────────────────────
-
-    /** @deprecated Use `agent.addChannel("phone", ...)`. */
-    addPhone(phone: string, config?: Partial<SessionConfig>): void {
-        this._send({ event: "add_phone", phone, ...(config ? { config } : {}) });
-    }
-
-    /** @deprecated Use `agent.removeChannel(phone)`. */
-    removePhone(phone: string): void {
-        this._send({ event: "remove_phone", phone });
-    }
-
-    /** @deprecated Use `agent.configure()`. */
-    updateConfig(config: Partial<SessionConfig>, phone?: string): void {
-        this._send({
-            event: "update_config",
-            config,
-            ...(phone ? { phone } : {}),
-        });
-    }
-
-    /** @deprecated Use `agent.dial()`. */
-    dial(options: {
-        to: string;
-        from: string;
-        greeting?: string;
-        metadata?: Record<string, unknown>;
-    }): Promise<Call> {
-        return new Promise<Call>((resolve, reject) => {
-            const onStarted = (call: Call) => {
-                if (call.to === options.to || call.direction === "outbound") {
-                    this.off("call.started", onStarted);
-                    this.off("error", onError);
-                    resolve(call);
-                }
-            };
-            const onError = (err: PinecallError) => {
-                this.off("call.started", onStarted);
-                this.off("error", onError);
-                reject(err);
-            };
-            this.on("call.started", onStarted);
-            this.on("error", onError);
-
-            this._send({
-                event: "call.dial",
-                to: options.to,
-                from: options.from,
-                ...(options.greeting ? { greeting: options.greeting } : {}),
-                ...(options.metadata ? { metadata: options.metadata } : {}),
-            });
-
-            setTimeout(() => {
-                this.off("call.started", onStarted);
-                this.off("error", onError);
-                reject(new PinecallError("Dial timeout", "TIMEOUT"));
-            }, 30000);
-        });
     }
 
     // ── Internal: WebSocket lifecycle ────────────────────────────────────
@@ -409,26 +301,10 @@ export class Pinecall extends TypedEmitter<PinecallEvents> {
 
         this._ws.onopen = () => {
             clearTimeout(connectTimeout);
-
-            if (this._opts.legacyProtocol) {
-                // Legacy v1: monolithic register
-                this._send({
-                    event: "register",
-                    api_key: this._opts.apiKey,
-                    ...(this._opts.appId || this._opts.agentId
-                        ? { app_id: this._opts.agentId ?? this._opts.appId }
-                        : {}),
-                    ...(this._opts.mode ? { mode: this._opts.mode } : {}),
-                    ...(this._opts.config ? { config: this._opts.config } : {}),
-                    ...(this._opts.phones ? { phones: this._opts.phones } : {}),
-                });
-            } else {
-                // Protocol v2: auth-only connect
-                this._send({
-                    event: "connect",
-                    api_key: this._opts.apiKey,
-                });
-            }
+            this._send({
+                event: "connect",
+                api_key: this._opts.apiKey,
+            });
         };
 
         this._ws.onmessage = (evt: MessageEvent) => {
@@ -515,7 +391,7 @@ export class Pinecall extends TypedEmitter<PinecallEvents> {
         const agentId = data.agent_id as string | undefined;
 
         switch (eventType) {
-            // ── Protocol v2: connected ───────────────────────────────────
+            // ── Connected (auth success) ─────────────────────────────────
             case "connected":
                 this._connectionId = (data.connection_id as string) ?? "";
                 this._orgId = (data.org_id as string) ?? "";
@@ -528,7 +404,7 @@ export class Pinecall extends TypedEmitter<PinecallEvents> {
                     this._send({
                         event: "agent.create",
                         agent_id: id,
-                        ...buildShortcutPayload((agent as any)._config),
+                        ...buildShortcutPayload(agent.getConfig()),
                     });
                 }
 
@@ -538,7 +414,7 @@ export class Pinecall extends TypedEmitter<PinecallEvents> {
                 this.emit("connected");
                 break;
 
-            // ── Agent lifecycle events (route to agent) ──────────────────
+            // ── Agent lifecycle ──────────────────────────────────────────
             case "agent.created":
             case "agent.configured":
             case "agent.resumed": {
@@ -549,46 +425,27 @@ export class Pinecall extends TypedEmitter<PinecallEvents> {
                 }
                 break;
             }
-            // ── Channel events (route to agent) ──────────────────────────
+
+            // ── Channel events ──────────────────────────────────────────
             case "channel.added":
             case "channel.configured":
             case "channel.removed": {
                 const agent = agentId ? this._agents.get(agentId) : null;
-                if (agent) {
-                    agent._handleEvent(data);
-                }
+                if (agent) agent._handleEvent(data);
                 break;
             }
 
-            // ── Call events (route to agent) ─────────────────────────────
+            // ── Call events → route to agent ────────────────────────────
             case "call.started":
-            case "session.started":
-            case "call.ended":
-            case "session.ended": {
+            case "call.ended": {
                 if (agentId) {
                     const agent = this._agents.get(agentId);
-                    if (agent) {
-                        agent._handleEvent(data);
-                        break;
-                    }
+                    if (agent) agent._handleEvent(data);
                 }
-                // Fallback: legacy single-agent — handle directly
-                this._handleLegacyCallEvent(data, eventType);
                 break;
             }
 
-            // ── Legacy v1: registered ────────────────────────────────────
-            case "registered":
-                this._appId = data.app_id as string;
-                this._protocolVersion = (data.protocol_version as string) ?? "";
-                this._connected = true;
-                this._startPing();
-                this._connectResolve?.();
-                this._connectResolve = null;
-                this._connectReject = null;
-                this.emit("connected");
-                break;
-
+            // ── Error ───────────────────────────────────────────────────
             case "error": {
                 const err = new PinecallError(
                     data.error as string,
@@ -601,13 +458,17 @@ export class Pinecall extends TypedEmitter<PinecallEvents> {
                 break;
             }
 
+            // ── No-op events (expected, no action needed) ───────────────
             case "authenticated":
             case "pong":
+            case "call.dialing":
+            case "session.configured":
+                // Expected protocol responses — no client-side action required
                 break;
 
-            // ── Displaced: another client registered with same agent_id ──
+            // ── Displaced: another client registered same agent_id ──────
             case "agent.displaced":
-                this._closing = true;          // Prevent reconnection
+                this._closing = true;
                 this._stopPing();
                 this._reconnector?.cancel();
                 this._connected = false;
@@ -618,9 +479,7 @@ export class Pinecall extends TypedEmitter<PinecallEvents> {
                 try { this._ws?.close(1000, "displaced"); } catch { /* ignore */ }
                 break;
 
-            case "call.dialing":
-                break;
-
+            // ── Call error ──────────────────────────────────────────────
             case "call.error": {
                 const err = new PinecallError(
                     data.error as string,
@@ -630,107 +489,15 @@ export class Pinecall extends TypedEmitter<PinecallEvents> {
                 break;
             }
 
-            // Legacy ack events
-            case "config_updated":
-            case "session_config_updated":
-            case "phone_added":
-            case "phone_removed":
-            case "session.configured":
-                break;
-
-            // All other call-scoped events — try agent routing first
+            // ── All other call-scoped events → route to agent ───────────
             default: {
                 if (agentId) {
                     const agent = this._agents.get(agentId);
-                    if (agent) {
-                        agent._handleEvent(data);
-                        break;
-                    }
-                }
-                // Fallback to legacy call routing
-                const callId = (data.call_id ?? data.session_id) as string;
-                if (callId) {
-                    const call = this._calls.get(callId);
-                    if (call) {
-                        call._handleEvent(data);
-                    }
+                    if (agent) agent._handleEvent(data);
                 }
                 break;
             }
         }
-    }
-
-    /** Handle call events for legacy single-agent mode. */
-    private _handleLegacyCallEvent(data: Record<string, unknown>, eventType: string): void {
-        if (eventType === "call.started" || eventType === "session.started") {
-            const callId = (data.call_id ?? data.session_id) as string;
-            const call = new Call(
-                {
-                    call_id: callId,
-                    from: (data.from as string) ?? "",
-                    to: (data.to as string) ?? "",
-                    direction: (data.direction as "inbound" | "outbound") ?? "inbound",
-                    metadata: data.metadata as Record<string, unknown>,
-                },
-                (msg) => this._send(msg),
-            );
-            this._calls.set(callId, call);
-            this._proxyCallEvents(call);
-            this.emit("call.started", call);
-        } else if (eventType === "call.ended" || eventType === "session.ended") {
-            const callId = (data.call_id ?? data.session_id) as string;
-            const call = this._calls.get(callId);
-            if (call) {
-                call._end(data.reason as string);
-                this._calls.delete(callId);
-                this.emit("call.ended", call, data.reason as string);
-            }
-        }
-    }
-
-    /**
-     * Proxy agent events to connection-level for backward compat.
-     * So `pc.on("call.started")` still works when there's one agent.
-     */
-    private _proxyAgentEvents(agent: Agent): void {
-        agent.on("call.started", (call) => this.emit("call.started", call));
-        agent.on("call.ended", (call, reason) => this.emit("call.ended", call, reason));
-        agent.on("speech.started", (e, c) => this.emit("speech.started", e, c));
-        agent.on("speech.ended", (e, c) => this.emit("speech.ended", e, c));
-        agent.on("user.speaking", (e, c) => this.emit("user.speaking", e, c));
-        agent.on("user.message", (e, c) => this.emit("user.message", e, c));
-        agent.on("eager.turn", (t, c) => this.emit("eager.turn", t, c));
-        agent.on("turn.pause", (e, c) => this.emit("turn.pause", e, c));
-        agent.on("turn.end", (t, c) => this.emit("turn.end", t, c));
-        agent.on("turn.resumed", (e, c) => this.emit("turn.resumed", e, c));
-        agent.on("turn.continued", (e, c) => this.emit("turn.continued", e, c));
-        agent.on("bot.speaking", (e, c) => this.emit("bot.speaking", e, c));
-        agent.on("bot.word", (e, c) => this.emit("bot.word", e, c));
-        agent.on("bot.finished", (e, c) => this.emit("bot.finished", e, c));
-        agent.on("bot.interrupted", (e, c) => this.emit("bot.interrupted", e, c));
-        agent.on("message.confirmed", (e, c) => this.emit("message.confirmed", e, c));
-        agent.on("reply.rejected", (e, c) => this.emit("reply.rejected", e, c));
-        agent.on("audio.metrics", (e, c) => this.emit("audio.metrics", e, c));
-    }
-
-    /** Legacy: proxy call events to connection level. */
-    private _proxyCallEvents(call: Call): void {
-        call.on("speech.started", (e) => this.emit("speech.started", e, call));
-        call.on("speech.ended", (e) => this.emit("speech.ended", e, call));
-        call.on("user.speaking", (e) => this.emit("user.speaking", e, call));
-        call.on("user.message", (e) => this.emit("user.message", e, call));
-        call.on("eager.turn", (turn) => this.emit("eager.turn", turn, call));
-        call.on("turn.pause", (e) => this.emit("turn.pause", e, call));
-        call.on("turn.end", (turn) => this.emit("turn.end", turn, call));
-        call.on("turn.resumed", (e) => this.emit("turn.resumed", e, call));
-        call.on("turn.continued", (e) => this.emit("turn.continued", e, call));
-        call.on("bot.speaking", (e) => this.emit("bot.speaking", e, call));
-        call.on("bot.word", (e) => this.emit("bot.word", e, call));
-        call.on("bot.finished", (e) => this.emit("bot.finished", e, call));
-        call.on("bot.interrupted", (e) => this.emit("bot.interrupted", e, call));
-        call.on("message.confirmed", (e) => this.emit("message.confirmed", e, call));
-        call.on("reply.rejected", (e) => this.emit("reply.rejected", e, call));
-        call.on("audio.metrics", (e) => this.emit("audio.metrics", e, call));
     }
 
     // ── Internal: send JSON ──────────────────────────────────────────────
