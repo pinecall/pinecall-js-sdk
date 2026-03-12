@@ -1,29 +1,39 @@
 /**
- * @pinecall/sdk/ai — High-level GPTAgent for building voice agents with OpenAI.
+ * @pinecall/sdk/ai — Declarative voice agents.
+ *
+ * Agent: base class with channels, history, onTurn() hook.
+ * GPTAgent: extends Agent with OpenAI streaming + tool calling.
  *
  * @example
  * ```typescript
  * import { GPTAgent, Phone } from "@pinecall/sdk/ai";
  *
- * class USPhone extends Phone {
+ * class MyPhone extends Phone {
  *   number = "+13186330963";
- *   stt = { provider: "deepgram-flux", language: "en" };
+ *   voice = "elevenlabs:abc";
+ *   greeting = "Hello!";
+ *   stt = { provider: "deepgram-flux" };
  *   turnDetection = "native";
  * }
  *
  * class MyAgent extends GPTAgent {
  *   model = "gpt-4.1-nano";
- *   voice = "elevenlabs:abc";
- *   phone = new USPhone();
+ *   phone = new MyPhone();
  *   instructions = "You are helpful.";
- *   greeting = "Hello!";
  * }
  *
  * export default MyAgent;
  * ```
  */
 
+// Base agent (no OpenAI dependency)
+export { Agent } from "./agent.js";
+export type { AgentOptions } from "./agent.js";
+
+// GPTAgent (extends Agent, requires openai)
 export { GPTAgent } from "./gpt-agent.js";
 export type { ToolDef, GPTAgentOptions } from "./gpt-agent.js";
 
+// Channel classes
 export { Channel, Phone, WebRTC } from "./channel.js";
+

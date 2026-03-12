@@ -35,7 +35,6 @@
 export { Pinecall, PinecallError } from "./client.js";
 export type { PinecallOptions, PinecallEvents } from "./client.js";
 
-export { Agent } from "./agent.js";
 export type {
     AgentEvents,
     AgentConfig,
@@ -45,7 +44,6 @@ export type {
     TurnDetectionShortcut,
     InterruptionShortcut,
 } from "./agent.js";
-export { buildShortcutPayload } from "./agent.js";
 
 export { Call } from "./call.js";
 export type { Turn, CallEvents, ReplyOptions, ForwardOptions } from "./call.js";

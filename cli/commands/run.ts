@@ -1,10 +1,10 @@
 /**
- * `pinecall run <file>` — load and run a GPTAgent from a JS/TS file.
+ * `pinecall run <name>` — load and run an Agent / GPTAgent.
  *
- * Usage:
- *   pinecall run agent.js
- *   pinecall run agent.js --phone +13186330963
- *   pinecall run agent.js --dial +14155551234 --from +13186330963
+ * Auto-discovers the file by trying extensions and common directories:
+ *   pinecall run Receptionist       → ./Receptionist.js, ./Receptionist.ts, etc.
+ *   pinecall run Receptionist.js    → exact path
+ *   pinecall run agents/Receptionist → ./agents/Receptionist.js, etc.
  */
 
 import { resolveEnv, requireOpenAI } from "../lib/env.js";
@@ -15,30 +15,60 @@ import { startInput } from "../ui/input.js";
 import { attachEvents } from "../ui/events.js";
 import { logLine, printHeader, printConfigLine } from "../ui/renderer.js";
 
+// ── File resolution ──────────────────────────────────────────────────────
+
+const EXTENSIONS = [".js", ".ts", ".mjs", ".mts"];
+
+async function resolveAgentFile(input: string): Promise<string> {
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cwd = process.cwd();
+
+    // Candidates: input as-is, then input + each extension
+    const candidates: string[] = [input];
+    const hasExt = EXTENSIONS.some(ext => input.endsWith(ext));
+    if (!hasExt) {
+        for (const ext of EXTENSIONS) {
+            candidates.push(input + ext);
+        }
+    }
+
+    // Try each candidate in cwd
+    for (const candidate of candidates) {
+        const full = path.resolve(cwd, candidate);
+        if (fs.existsSync(full)) return full;
+    }
+
+    throw new CliError(
+        `Could not find agent file: ${input}\n` +
+        `Tried: ${candidates.join(", ")}`,
+    );
+}
+
+// ── Run command ──────────────────────────────────────────────────────────
+
 export async function run(argv: string[]): Promise<void> {
     const args = parseArgs(argv, {
         positional: "file",
-        values: ["--phone", "--dial", "--from"],
+        values: ["--phone", "--dial"],
     });
 
-    const filePath = args.positional;
-    if (!filePath) {
-        throw new CliError("Usage: pinecall run <agent-file.js>");
+    const input = args.positional;
+    if (!input) {
+        throw new CliError("Usage: pinecall run <AgentName>");
     }
 
     const env = resolveEnv();
     requireOpenAI(env);
 
-    // Dynamic import the agent file — resolve relative to cwd
-    const path = await import("node:path");
-    const fullPath = path.resolve(process.cwd(), filePath);
+    const fullPath = await resolveAgentFile(input);
 
     let AgentClass: any;
     try {
         const mod = await import(fullPath);
         AgentClass = mod.default ?? mod;
     } catch (err) {
-        throw new CliError(`Failed to load agent file: ${filePath}\n${err}`);
+        throw new CliError(`Failed to load agent file: ${fullPath}\n${err}`);
     }
 
     if (typeof AgentClass !== "function") {
@@ -58,12 +88,10 @@ export async function run(argv: string[]): Promise<void> {
     // Add phone channel (skip if the class already defines one)
     const phoneArg = args.values.get("--phone");
     const dialTo = args.values.get("--dial");
-    const dialFrom = args.values.get("--from");
 
     if (phoneArg) {
         agent.addPhone(phoneArg);
-    } else if (!dialTo && !agent.phone && !agent.phones?.length) {
-        // Interactive phone picker only if no phone is set anywhere
+    } else if (!dialTo && !agent.phone && !agent.channels?.length) {
         const phones = await agent.pinecall.fetchPhones();
         const phone = await pickPhone(phones);
         agent.addPhone(phone);
@@ -72,19 +100,18 @@ export async function run(argv: string[]): Promise<void> {
     // Start
     await agent.start();
 
-    const agentName = AgentClass.name || "GPTAgent";
+    const agentName = AgentClass.name || "Agent";
     printHeader(`${agentName} is live`);
     printConfigLine("Model", agent.model);
     if (agent.voice) printConfigLine("Voice", agent.voice);
     if (agent.language) printConfigLine("Language", agent.language);
     logLine("");
 
-    // Attach CLI UI to the underlying agent (display-only — GPTAgent handles turns)
-    attachEvents(agent.agent);
+    // Attach CLI UI
+    attachEvents(agent.core);
 
-    // Wire up interactive /commands
     startInput({
-        agent: agent.agent,
+        agent: agent.core,
         pc: agent.pinecall,
         instructions: agent.instructions,
         onInstructionsChange: (newInstructions: string) => {
@@ -92,16 +119,15 @@ export async function run(argv: string[]): Promise<void> {
         },
     });
 
-    // Outbound dial if requested
+    // Outbound dial — uses agent's phone as `from`
     if (dialTo) {
-        if (!dialFrom && !phoneArg) {
-            throw new CliError("--dial requires --from (caller phone number)");
+        const from = phoneArg ?? agent.phone?.number;
+        if (!from) {
+            throw new CliError("--dial requires a phone number on the agent (no phone configured)");
         }
-        const from = dialFrom ?? phoneArg!;
         logLine(`  Dialing ${dialTo} from ${from}...`);
         await agent.dial({ to: dialTo, from });
     }
 
-    // Keep running
     await new Promise(() => { });
 }

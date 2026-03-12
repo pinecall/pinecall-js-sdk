@@ -1,20 +1,24 @@
 /**
  * Receptionist agent with tool calling.
  *
- * Usage: pinecall run examples/receptionist.js
+ * Usage: pinecall run examples/agents/receptionist.js
  */
 
 import { GPTAgent, Phone } from "@pinecall/sdk/ai";
 
+class ReceptionistPhone extends Phone {
+    number = "+13186330963";
+    voice = "elevenlabs:EXAVITQu4vr4xnSDxMaL";
+    greeting = "Welcome to La Piña Dorada! How can I help you today?";
+    turnDetection = "smart_turn";
+}
+
 class Receptionist extends GPTAgent {
     model = "gpt-4.1-nano";
-    voice = "elevenlabs:EXAVITQu4vr4xnSDxMaL";
-    phone = new Phone("+13186330963");
-    turnDetection = "smart_turn";
+    phone = new ReceptionistPhone();
     instructions = `You are a friendly restaurant receptionist for "La Piña Dorada".
 You help customers book tables, answer questions about the menu, and provide directions.
 Be concise — 1-2 sentences max. Be warm and professional.`;
-    greeting = "Welcome to La Piña Dorada! How can I help you today?";
 
     async bookReservation({ date, time, guests, name }) {
         console.log(`  📅 Booking: ${guests} guests for ${name} on ${date} at ${time}`);
