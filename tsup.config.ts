@@ -31,7 +31,7 @@ export default defineConfig([
         sourcemap: false,
         target: "es2020",
         minify: false,
-        external: ["@pinecall/sdk", "openai"],
+        external: ["@pinecall/sdk", "openai", "blessed"],
         banner: {
             js: "#!/usr/bin/env node",
         },

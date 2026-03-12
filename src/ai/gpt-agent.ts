@@ -58,6 +58,8 @@ export class GPTAgent extends Agent {
     temperature?: number;
     /** Max response tokens. */
     maxTokens?: number;
+    /** Max tool calling rounds per turn. Default: 5. */
+    maxToolRounds = 5;
 
     // ── Internal ─────────────────────────────────────────────────────────
 
@@ -101,37 +103,40 @@ export class GPTAgent extends Agent {
     // ── onTurn override: OpenAI streaming ────────────────────────────────
 
     override async onTurn(turn: Turn, call: Call, history: ConversationHistory): Promise<void> {
-        await this._streamOpenAIResponse(turn, call, history);
+        await this._runLLM(turn, call, history, 0);
     }
 
-    // ── Internal: OpenAI streaming + tools ───────────────────────────────
+    // ── Internal: LLM round (streams text, handles tools, recurses) ─────
 
-    private async _streamOpenAIResponse(
+    private async _runLLM(
         turn: Turn,
         call: Call,
         history: ConversationHistory,
+        round: number,
     ): Promise<void> {
+        if (round >= this.maxToolRounds) return;
+
         const tools = this._getOpenAITools();
 
-        const requestParams: OpenAI.ChatCompletionCreateParamsStreaming = {
+        // Emit LLM start event for TUI — before API call so user sees it instantly
+        this._core._emit("llm.start" as any, call, {
+            model: this.model, round,
+            messageId: turn.messageId, text: turn.text,
+        } as any);
+
+        const completion = await this._openai.chat.completions.create({
             model: this.model,
-            messages: history.toMessages() as OpenAI.ChatCompletionMessageParam[],
+            messages: history.toMessages() as unknown as OpenAI.ChatCompletionMessageParam[],
             stream: true,
             ...(tools.length > 0 ? { tools } : {}),
             ...(this.temperature !== undefined ? { temperature: this.temperature } : {}),
             ...(this.maxTokens !== undefined ? { max_tokens: this.maxTokens } : {}),
-        };
-
-        const completion = await this._openai.chat.completions.create(requestParams);
+        });
 
         let reply = "";
-        const toolCalls: Array<{
-            id: string;
-            name: string;
-            args: string;
-        }> = [];
-
-        const stream = call.replyStream(turn);
+        const toolCalls: Array<{ id: string; name: string; args: string }> = [];
+        // First round replies to the user's message; tool-continuation rounds use a fresh stream
+        const stream = round === 0 ? call.replyStream(turn) : call.replyStream();
 
         for await (const chunk of completion) {
             if (stream.aborted) break;
@@ -143,17 +148,14 @@ export class GPTAgent extends Agent {
             if (token) {
                 stream.write(token);
                 reply += token;
+                this._core._emit("llm.token" as any, call, { token } as any);
             }
 
             if (choice.delta?.tool_calls) {
                 for (const tc of choice.delta.tool_calls) {
                     if (tc.index !== undefined) {
                         if (!toolCalls[tc.index]) {
-                            toolCalls[tc.index] = {
-                                id: tc.id ?? "",
-                                name: tc.function?.name ?? "",
-                                args: "",
-                            };
+                            toolCalls[tc.index] = { id: tc.id ?? "", name: tc.function?.name ?? "", args: "" };
                         }
                         if (tc.id) toolCalls[tc.index].id = tc.id;
                         if (tc.function?.name) toolCalls[tc.index].name = tc.function.name;
@@ -165,44 +167,67 @@ export class GPTAgent extends Agent {
 
         stream.end();
 
+        // Add any text reply to history
         if (reply && !stream.aborted) {
             history.addAssistant(reply, stream.messageId);
         }
 
-        if (toolCalls.length > 0 && !stream.aborted) {
-            await this._handleToolCalls(toolCalls, turn, call, history);
+        // Emit done event
+        this._core._emit("llm.done" as any, call, { reply, aborted: stream.aborted } as any);
+
+        // No tool calls → done
+        if (toolCalls.length === 0 || stream.aborted) return;
+
+        // Emit tool call events
+        for (const tc of toolCalls) {
+            this._core._emit("llm.tool_call" as any, call, { name: tc.name, args: tc.args } as any);
         }
+
+        // Hold the call while tools execute — user hears music instead of silence.
+        // The next round's replyStream.write() auto-unholds via bot.reply.stream.
+        call.hold();
+
+        // Execute tools and recurse
+        await this._executeTools(toolCalls, history, call);
+        await this._runLLM(turn, call, history, round + 1);
     }
 
-    private async _handleToolCalls(
+    // ── Internal: execute tool calls ─────────────────────────────────────
+
+    private async _executeTools(
         toolCalls: Array<{ id: string; name: string; args: string }>,
-        turn: Turn,
-        call: Call,
         history: ConversationHistory,
+        call?: Call,
     ): Promise<void> {
-        const assistantMsg: any = {
+        // Add assistant message with tool_calls
+        history["_messages"].push({
             role: "assistant",
-            content: null,
+            content: "",
             tool_calls: toolCalls.map((tc) => ({
                 id: tc.id,
                 type: "function" as const,
                 function: { name: tc.name, arguments: tc.args },
             })),
-        };
-        history["_messages"].push(assistantMsg);
+        } as any);
 
+        // Execute each tool
         for (const tc of toolCalls) {
             let result: unknown;
             try {
                 const args = JSON.parse(tc.args);
                 const handler = (this as any)[tc.name];
                 if (typeof handler === "function") {
-                    result = await handler.call(this, args);
+                    result = await handler.call(this, args, call);
                 } else {
                     result = { error: `Unknown tool: ${tc.name}` };
                 }
             } catch (err) {
                 result = { error: String(err) };
+            }
+
+            // Emit tool result event
+            if (call) {
+                this._core._emit("llm.tool_result" as any, call, { name: tc.name, result } as any);
             }
 
             history["_messages"].push({
@@ -211,33 +236,9 @@ export class GPTAgent extends Agent {
                 tool_call_id: tc.id,
             } as any);
         }
-
-        const stream = call.replyStream(turn);
-
-        try {
-            const completion = await this._openai.chat.completions.create({
-                model: this.model,
-                messages: history["_messages"] as OpenAI.ChatCompletionMessageParam[],
-                stream: true,
-                ...(this.temperature !== undefined ? { temperature: this.temperature } : {}),
-            });
-
-            let reply = "";
-            for await (const chunk of completion) {
-                if (stream.aborted) break;
-                const token = chunk.choices[0]?.delta?.content;
-                if (token) {
-                    stream.write(token);
-                    reply += token;
-                }
-            }
-
-            stream.end();
-        } catch (err) {
-            stream.end();
-            console.error("[GPTAgent] Tool response error:", err);
-        }
     }
+
+    // ── Internal: build OpenAI tools array ───────────────────────────────
 
     private _getOpenAITools(): OpenAI.ChatCompletionTool[] {
         const Ctor = this.constructor as typeof GPTAgent;

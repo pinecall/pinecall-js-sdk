@@ -162,6 +162,21 @@ export class Agent {
         return this._histories.get(callId);
     }
 
+    /**
+     * Log a message to the TUI LLM pane (or console if no TUI).
+     * Use this instead of console.log inside tool functions.
+     *
+     * @example
+     * async bookReservation({ date }, call) {
+     *     this.log(call, `📅 Booking for ${date}`);
+     *     return { confirmed: true };
+     * }
+     */
+    log(call: Call, ...args: unknown[]): void {
+        const msg = args.map(a => typeof a === "string" ? a : JSON.stringify(a)).join(" ");
+        this._core._emit("agent.log" as any, call, msg as any);
+    }
+
     // ── Lifecycle hooks (override in subclass) ───────────────────────────
 
     /** Called on each turn. Override to handle user speech. */

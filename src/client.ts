@@ -19,6 +19,7 @@ import { Call, type Turn } from "./call.js";
 import { Agent } from "./agent.js";
 import { buildShortcutPayload } from "./utils/protocol.js";
 import { forwardAgentEvents } from "./utils/proxy.js";
+import { appendFileSync } from "fs";
 import type { AgentConfig, ChannelConfig, AgentEvents } from "./agent.js";
 import {
     fetchVoices as _fetchVoices,
@@ -125,6 +126,9 @@ export class Pinecall extends TypedEmitter<PinecallEvents> {
     private _reconnector: Reconnector | null = null;
     private _pingTimer: ReturnType<typeof setInterval> | null = null;
     private _closing = false;
+
+    // Protocol debug log
+    private _logFile: string | null = process.env.PINECALL_LOG || null;
 
     // Connection state
     private _connectionId = "";
@@ -387,6 +391,7 @@ export class Pinecall extends TypedEmitter<PinecallEvents> {
     // ── Internal: message routing ────────────────────────────────────────
 
     private _onMessage(data: Record<string, unknown>): void {
+        this._log("←", data);
         const eventType = data.event as string;
         const agentId = data.agent_id as string | undefined;
 
@@ -503,9 +508,21 @@ export class Pinecall extends TypedEmitter<PinecallEvents> {
     // ── Internal: send JSON ──────────────────────────────────────────────
 
     private _send(data: Record<string, unknown>): void {
+        this._log("→", data);
         if (this._ws && this._ws.readyState === WebSocket.OPEN) {
             this._ws.send(JSON.stringify(data));
         }
+    }
+
+    /** @internal Append to protocol log file if PINECALL_LOG is set. */
+    private _log(dir: string, data: Record<string, unknown>): void {
+        if (!this._logFile) return;
+        const event = data.event as string;
+        // Filter out noisy audio analysis events
+        if (event === "audio.metrics" || event === "audio_analysis") return;
+        const ts = new Date().toISOString();
+        const line = `${ts} ${dir} ${JSON.stringify(data)}\n`;
+        try { appendFileSync(this._logFile, line); } catch { /* ignore */ }
     }
 
     // ── Internal: ping/pong ──────────────────────────────────────────────

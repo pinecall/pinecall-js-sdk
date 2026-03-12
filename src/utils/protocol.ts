@@ -22,7 +22,7 @@ export function buildShortcutPayload(opts?: ShortcutInput): Record<string, unkno
 
     if (opts.voice !== undefined) payload.voice = opts.voice;
     if (opts.language !== undefined) payload.language = opts.language;
-    if (opts.stt !== undefined) payload.stt = opts.stt;
+    if (opts.stt !== undefined) payload.stt = expandSTT(opts.stt);
     if (opts.turnDetection !== undefined) payload.turn_detection = opts.turnDetection;
     if (opts.interruption !== undefined) payload.interruption = opts.interruption;
     if (opts.config !== undefined) payload.config = opts.config;
@@ -31,4 +31,21 @@ export function buildShortcutPayload(opts?: ShortcutInput): Record<string, unkno
     }
 
     return payload;
+}
+
+/**
+ * Expand STT string shortcut → object.
+ *
+ *   "deepgram"            → "deepgram"              (simple provider name)
+ *   "deepgram:nova-3"     → { provider, model }
+ *   "deepgram:nova-3:es"  → { provider, model, language }
+ */
+function expandSTT(stt: string | Record<string, unknown>): string | Record<string, unknown> {
+    if (typeof stt !== "string") return stt;
+    const parts = stt.split(":");
+    if (parts.length === 1) return stt;
+    const obj: Record<string, string> = { provider: parts[0] };
+    if (parts[1]) obj.model = parts[1];
+    if (parts[2]) obj.language = parts[2];
+    return obj;
 }

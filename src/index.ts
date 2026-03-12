@@ -35,6 +35,7 @@
 export { Pinecall, PinecallError } from "./client.js";
 export type { PinecallOptions, PinecallEvents } from "./client.js";
 
+export { Agent } from "./agent.js";
 export type {
     AgentEvents,
     AgentConfig,

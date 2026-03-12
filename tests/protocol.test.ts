@@ -43,4 +43,25 @@ describe("buildShortcutPayload", () => {
         const result = buildShortcutPayload({ config } as any);
         expect(result.config).toBe(config);
     });
+
+    it("expands STT string shortcut with provider:model:language", () => {
+        const result = buildShortcutPayload({ stt: "deepgram:nova-3:es" });
+        expect(result.stt).toEqual({ provider: "deepgram", model: "nova-3", language: "es" });
+    });
+
+    it("expands STT string shortcut with provider:model", () => {
+        const result = buildShortcutPayload({ stt: "deepgram:nova-3" });
+        expect(result.stt).toEqual({ provider: "deepgram", model: "nova-3" });
+    });
+
+    it("passes STT simple string as-is", () => {
+        const result = buildShortcutPayload({ stt: "deepgram" });
+        expect(result.stt).toBe("deepgram");
+    });
+
+    it("passes STT object as-is", () => {
+        const sttObj = { provider: "deepgram", model: "nova-3", language: "es" };
+        const result = buildShortcutPayload({ stt: sttObj as any });
+        expect(result.stt).toEqual(sttObj);
+    });
 });

@@ -1,7 +1,7 @@
 /**
  * pinecall dial — outbound call command.
  *
- * Thin orchestrator: parse args → resolve env → build agent → dial → attach handlers → connect.
+ * Thin orchestrator: parse args → resolve env → build agent → TUI → dial → connect.
  */
 
 import { Pinecall } from "@pinecall/sdk";
@@ -11,12 +11,13 @@ import { resolveEnv, requireOpenAI } from "../lib/env.js";
 import { getPreset } from "../lib/presets.js";
 import { DEFAULT_MODEL } from "../lib/constants.js";
 import { pickPhone } from "../lib/phone-picker.js";
-import { streamLLMReply, type LLMContext } from "../lib/llm.js";
+import { type LLMContext } from "../lib/llm.js";
+import { streamLLMReplyWithTUI } from "../ui/tui-llm.js";
 import { CliError } from "../lib/errors.js";
-import { printHeader, printConfig, printStatus, logLine, writeln } from "../ui/renderer.js";
-import { attachEvents } from "../ui/events.js";
-import { startInput } from "../ui/input.js";
-import { ACCENT, DIM, MUTED } from "../ui/theme.js";
+import { createTUI } from "../ui/tui.js";
+import { createCallSidebar } from "../ui/tui-sidebar.js";
+import { attachTUIEvents } from "../ui/tui-events.js";
+import { setupCommandPalette } from "../ui/tui-commands.js";
 
 export default async function dial(argv: string[]): Promise<void> {
     // ── Parse args ──
@@ -56,8 +57,6 @@ export default async function dial(argv: string[]): Promise<void> {
         { role: "system", content: preset.system },
     ];
 
-    let currentInstructions = preset.system;
-
     const llmCtx: LLMContext = {
         openai,
         model: DEFAULT_MODEL,
@@ -65,44 +64,37 @@ export default async function dial(argv: string[]): Promise<void> {
         errorMsg: preset.errorMsg,
     };
 
+    // ── TUI ──
+    const tui = createTUI();
+    const sidebar = createCallSidebar(tui);
+
+    tui.callLog.log(`{cyan-fg}Dialing{/cyan-fg} ${to}`);
+    tui.callLog.log(`{cyan-fg}From{/cyan-fg}    ${from}`);
+    tui.callLog.log(`{cyan-fg}Voice{/cyan-fg}   ${preset.voice}`);
+    tui.callLog.log(`{cyan-fg}Model{/cyan-fg}   ${DEFAULT_MODEL}`);
+    tui.callLog.log("");
+    tui.screen.render();
+
     // ── Events ──
-    attachEvents(a, (turn, call) => {
-        streamLLMReply(call, turn, llmCtx);
+    attachTUIEvents(a, sidebar, (turn, call) => {
+        streamLLMReplyWithTUI(call, turn, llmCtx, sidebar);
     });
 
     a.on("call.ended", async () => {
-        writeln("");
-        printStatus("Call ended");
+        sidebar.logCall("", "{gray-fg}Call ended{/gray-fg}");
         await pc.disconnect();
+        tui.destroy();
         process.exit(0);
     });
 
     // ── Connect & dial ──
-    printHeader("Outbound Call");
     await pc.connect();
+    await a.dial({ to, from, greeting: preset.greeting });
 
-    printConfig({
-        phone: from,
-        voice: preset.voice,
-        stt: typeof preset.stt === "string" ? preset.stt : (preset.stt as any).provider,
-        turnDetection: typeof preset.turnDetection === "string" ? preset.turnDetection : "custom",
-        model: DEFAULT_MODEL,
-        lang,
-    });
-
-    printStatus("Dialing", ACCENT(to));
-    const call = await a.dial({ to, from, greeting: preset.greeting });
-    printStatus("Connected", DIM(call.id.slice(0, 12)));
-
-    startInput({
+    setupCommandPalette({
+        tui,
+        sidebar,
         agent: a,
         pc,
-        instructions: currentInstructions,
-        onInstructionsChange: (newInstructions: string) => {
-            currentInstructions = newInstructions;
-            if (history[0]?.role === "system") {
-                history[0].content = newInstructions;
-            }
-        },
     });
 }

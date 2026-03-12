@@ -43,9 +43,16 @@ export class ConversationHistory {
         return this._messages.length;
     }
 
-    /** Return messages in OpenAI format (role + content only). */
-    toMessages(): Array<{ role: string; content: string }> {
-        return this._messages.map((m) => ({ role: m.role, content: m.content }));
+    /** Return messages in OpenAI format (preserving tool_calls, tool_call_id, etc). */
+    toMessages(): Array<Record<string, unknown>> {
+        return this._messages.map((m) => {
+            const msg: Record<string, unknown> = { role: m.role, content: m.content };
+            // Preserve tool-calling fields for OpenAI compatibility
+            if ((m as any).tool_calls) msg.tool_calls = (m as any).tool_calls;
+            if ((m as any).tool_call_id) msg.tool_call_id = (m as any).tool_call_id;
+            if ((m as any).name) msg.name = (m as any).name;
+            return msg;
+        });
     }
 
     // ── Write ────────────────────────────────────────────────────────────

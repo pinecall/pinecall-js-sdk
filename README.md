@@ -53,7 +53,7 @@ class Receptionist extends GPTAgent {
         number: "+13186330963",
         voice: "elevenlabs:EXAVITQu4vr4xnSDxMaL",
         greeting: "Hey! How can I help you?",
-        stt: { provider: "deepgram-flux" },
+        stt: "deepgram-flux",
         turnDetection: "native",
     });
     instructions = "You are a helpful voice assistant. Be concise.";
@@ -116,18 +116,17 @@ Included with the SDK.
 | `pinecall phones` | List your phone numbers |
 | `pinecall help` | Show help |
 
-### Interactive Commands
+### Keyboard Shortcuts
 
 While a call is active:
 
-| Command | Description |
-|---------|-------------|
-| `/instructions` | Edit system prompt in `$EDITOR` |
-| `/hangup` | Hang up all calls |
-| `/hold` · `/unhold` | Hold / resume calls |
-| `/mute` · `/unmute` | Mute / unmute mic |
-| `/calls` | List active calls |
-| `/help` | Show all commands |
+| Key | Description |
+|-----|-------------|
+| `Ctrl+O` | Open command palette (Hangup, Hold, DTMF, Forward, Say…) |
+| `Ctrl+T` | Type a slash command (e.g. `/hangup`, `/hold`) |
+| `Ctrl+Y` | Copy LLM history to clipboard |
+| `↑` `↓` | Navigate between active calls |
+| `Ctrl+C` | Quit |
 
 ### Environment Variables
 
@@ -162,7 +161,7 @@ class MyAgent extends GPTAgent {
 
     // Audio (agent-level = defaults for all channels)
     voice = "elevenlabs:EXAVITQu4vr4xnSDxMaL";
-    stt = { provider: "deepgram", model: "nova-3" };
+    stt = "deepgram:nova-3";                              // string shortcut
     turnDetection = "smart_turn";
     interruption = { enabled: true, min_duration_ms: 300 };
 
@@ -195,12 +194,12 @@ Agent-level fields are **defaults for all channels**. Each channel only override
 class MyAgent extends GPTAgent {
     // Defaults — apply to every channel
     voice = "elevenlabs:EXAVITQu4vr4xnSDxMaL";
-    stt = { provider: "deepgram", model: "nova-3" };
+    stt = "deepgram:nova-3";
     turnDetection = "smart_turn";
 
     channels = [
         new Phone({ number: "+13186330963", greeting: "Hello!" }),              // inherits defaults
-        new Phone({ number: "+34607", language: "es", voice: "elevenlabs:xyz" }), // overrides voice
+        new Phone({ number: "+34607", language: "es", stt: "deepgram:nova-3:es" }), // overrides stt
         new WebRTC(),                                                           // inherits defaults
     ];
 }
@@ -224,7 +223,7 @@ class ESPhone extends Phone {
     number = "+34607123456";
     voice = { provider: "elevenlabs", voice_id: "VmejBeYhbrcTPwDniox7", speed: 1.05 };
     greeting = "¡Hola! ¿En qué puedo ayudarte?";
-    stt = { provider: "deepgram", model: "nova-3", language: "es" };
+    stt = "deepgram:nova-3:es";
     turnDetection = "smart_turn";
 }
 
@@ -237,7 +236,9 @@ class MyAgent extends GPTAgent {
 
 ### Tool Calling
 
-Tools are class methods. Register schemas with `defineTool()`:
+Tools are class methods. Register schemas with `defineTool()`. The call is auto-held while tools execute (user hears music, not silence).
+
+Tool methods receive `(args, call)` — use `this.log(call, ...)` to log to the TUI:
 
 ```javascript
 class Receptionist extends GPTAgent {
@@ -248,7 +249,8 @@ class Receptionist extends GPTAgent {
     });
     instructions = "You are a restaurant receptionist. Be concise.";
 
-    async bookReservation({ date, time, guests, name }) {
+    async bookReservation({ date, time, guests, name }, call) {
+        this.log(call, `📅 Booking for ${name} on ${date}`);
         const result = await bookingAPI.create({ date, time, guests, name });
         return { confirmed: true, id: result.id };
     }
@@ -341,7 +343,7 @@ await pc.disconnect();
 const agent = pc.agent("sales-bot", {
     voice: "elevenlabs:IKne3meq5aSn9XLyUdCD",
     language: "es",
-    stt: { provider: "deepgram", model: "nova-3" },
+    stt: "deepgram:nova-3:es",
     turnDetection: "smart_turn",
     interruption: false,
 });
@@ -354,7 +356,7 @@ agent.addChannel("phone", "+19035551234");
 
 agent.addChannel("phone", "+34607123456", {
     voice: "cartesia:uuid",
-    stt: { provider: "deepgram", language: "es" },
+    stt: "deepgram:nova-3:es",
 });
 
 agent.addChannel("webrtc");
@@ -482,12 +484,23 @@ Config hierarchy (highest priority wins):
 
 ### STT (Speech-to-Text)
 
+**String shortcut** — `"provider:model:language"`:
+
+```typescript
+stt: "deepgram:nova-3:es"     // → { provider: "deepgram", model: "nova-3", language: "es" }
+stt: "deepgram:nova-3"         // → { provider: "deepgram", model: "nova-3" }
+stt: "deepgram-flux"           // simple provider name
+```
+
+Or use the full object form for extra parameters (keywords, thresholds, etc.).
+
 #### Deepgram Nova-3
 
 30+ languages. Best general-purpose.
 
 ```typescript
-stt: { provider: "deepgram", language: "en", model: "nova-3" }
+stt: "deepgram:nova-3:en"   // shortcut
+stt: { provider: "deepgram", language: "en", model: "nova-3" }   // full
 ```
 
 | Parameter | Type | Default | Description |

@@ -11,9 +11,11 @@ import { resolveEnv, requireOpenAI } from "../lib/env.js";
 import { parseArgs } from "../lib/args.js";
 import { pickPhone } from "../lib/phone-picker.js";
 import { CliError } from "../lib/errors.js";
-import { startInput } from "../ui/input.js";
-import { attachEvents } from "../ui/events.js";
-import { logLine, printHeader, printConfigLine } from "../ui/renderer.js";
+import { createTUI } from "../ui/tui.js";
+import { createCallSidebar } from "../ui/tui-sidebar.js";
+import { attachTUIEvents } from "../ui/tui-events.js";
+import { attachTUILLM } from "../ui/tui-llm.js";
+import { setupCommandPalette } from "../ui/tui-commands.js";
 
 // ── File resolution ──────────────────────────────────────────────────────
 
@@ -97,26 +99,31 @@ export async function run(argv: string[]): Promise<void> {
         agent.addPhone(phone);
     }
 
+    // ── TUI ──
+    const tui = createTUI();
+    const sidebar = createCallSidebar(tui);
+
+    const agentName = AgentClass.name || "Agent";
+    tui.callLog.log(`{cyan-fg}${agentName}{/cyan-fg} is live`);
+    if (agent.model) tui.callLog.log(`{cyan-fg}Model{/cyan-fg}  ${agent.model}`);
+    if (agent.voice) tui.callLog.log(`{cyan-fg}Voice{/cyan-fg}  ${agent.voice}`);
+    if (agent.language) tui.callLog.log(`{cyan-fg}Lang{/cyan-fg}   ${agent.language}`);
+    tui.callLog.log("");
+    tui.llmLog.log("{gray-fg}Waiting for first call…{/gray-fg}");
+    tui.screen.render();
+
     // Start
     await agent.start();
 
-    const agentName = AgentClass.name || "Agent";
-    printHeader(`${agentName} is live`);
-    printConfigLine("Model", agent.model);
-    if (agent.voice) printConfigLine("Voice", agent.voice);
-    if (agent.language) printConfigLine("Language", agent.language);
-    logLine("");
-
     // Attach CLI UI
-    attachEvents(agent.core);
+    attachTUIEvents(agent.core, sidebar);
+    attachTUILLM(agent.core, sidebar);
 
-    startInput({
+    setupCommandPalette({
+        tui,
+        sidebar,
         agent: agent.core,
         pc: agent.pinecall,
-        instructions: agent.instructions,
-        onInstructionsChange: (newInstructions: string) => {
-            agent.instructions = newInstructions;
-        },
     });
 
     // Outbound dial — uses agent's phone as `from`
@@ -125,7 +132,7 @@ export async function run(argv: string[]): Promise<void> {
         if (!from) {
             throw new CliError("--dial requires a phone number on the agent (no phone configured)");
         }
-        logLine(`  Dialing ${dialTo} from ${from}...`);
+        sidebar.logCall("", `Dialing ${dialTo} from ${from}...`);
         await agent.dial({ to: dialTo, from });
     }
 
