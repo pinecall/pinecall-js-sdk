@@ -96,6 +96,15 @@ export class Channel {
     interruption?: ChannelConfig["interruption"];
 
     /**
+     * Per-channel greeting — said on call.started.
+     * Overrides the agent-level greeting for calls on this channel.
+     *
+     * @example
+     * greeting = "¡Hola! ¿En qué puedo ayudarte?";
+     */
+    greeting?: string;
+
+    /**
      * Raw session config — for anything not covered by shortcuts.
      * Use for VAD tuning, speaker filter, analysis, etc.
      *

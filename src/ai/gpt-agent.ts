@@ -287,6 +287,34 @@ export class GPTAgent {
         await this._streamOpenAIResponse(turn, call, history);
     }
 
+    // ── Internal: channel greeting lookup ─────────────────────────────────
+
+    /** Find a per-channel greeting for a call by matching call.to against Phone numbers. */
+    private _greetingForCall(call: Call): string | undefined {
+        // Collect all Phone instances
+        const allPhones: Phone[] = [];
+        if (this.phone instanceof Phone) allPhones.push(this.phone);
+        if (this.phones) {
+            for (const p of this.phones) {
+                if (p instanceof Phone) allPhones.push(p);
+            }
+        }
+        if (this.channels) {
+            for (const ch of this.channels) {
+                if (ch instanceof Phone) allPhones.push(ch);
+            }
+        }
+
+        // Match call.to against phone numbers
+        const match = allPhones.find(p => p.number && call.to === p.number);
+        if (match?.greeting) return match.greeting;
+
+        // Check WebRTC greeting (for non-phone calls)
+        if (this.webrtc?.greeting) return this.webrtc.greeting;
+
+        return undefined;
+    }
+
     // ── Internal: event wiring ───────────────────────────────────────────
 
     private _wireEvents(): void {
@@ -295,9 +323,10 @@ export class GPTAgent {
             const history = ConversationHistory.forCall(call, this.instructions);
             this._histories.set(call.id, history);
 
-            // Auto-greeting
-            if (this.greeting) {
-                call.say(this.greeting);
+            // Auto-greeting: per-channel greeting takes priority over agent greeting
+            const greeting = this._greetingForCall(call) ?? this.greeting;
+            if (greeting) {
+                call.say(greeting);
             }
         });
 

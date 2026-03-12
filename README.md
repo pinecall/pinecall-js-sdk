@@ -63,16 +63,16 @@ import { GPTAgent, Phone } from "@pinecall/sdk/ai";
 
 class USPhone extends Phone {
     number = "+13186330963";
+    voice = "elevenlabs:EXAVITQu4vr4xnSDxMaL";
+    greeting = "Hey! How can I help you?";
     stt = { provider: "deepgram-flux", language: "en" };
     turnDetection = "native";
 }
 
 class MyAgent extends GPTAgent {
     model = "gpt-4.1-nano";
-    voice = "elevenlabs:EXAVITQu4vr4xnSDxMaL";
     phone = new USPhone();
     instructions = "You are a helpful voice assistant. Be concise.";
-    greeting = "Hey! How can I help you?";
 }
 
 export default MyAgent;
@@ -223,7 +223,7 @@ class MyAgent extends GPTAgent {
 | `turnDetection` | string/object | — | Turn detection mode or full config |
 | `interruption` | boolean/object | — | `false` to disable, or `{ energy_threshold_db, min_duration_ms }` |
 | `instructions` | string | `"You are a helpful voice assistant."` | System prompt |
-| `greeting` | string | — | Auto-say on call start |
+| `greeting` | string | — | Fallback greeting (channel greeting takes priority) |
 | `turnEvent` | string | `"eager.turn"` | Which turn event triggers the LLM |
 | `temperature` | number | — | LLM temperature |
 | `maxTokens` | number | — | Max response tokens |
@@ -243,6 +243,7 @@ import { Phone, WebRTC } from "@pinecall/sdk/ai";
 // Phone with full TTS config + STT keyterms
 class USPhone extends Phone {
     number = "+13186330963";
+    greeting = "Hey! How can I help you?";
     voice = {
         provider: "elevenlabs",
         voice_id: "EXAVITQu4vr4xnSDxMaL",
@@ -262,6 +263,7 @@ class USPhone extends Phone {
 class ESPhone extends Phone {
     number = "+34607123456";
     language = "es";
+    greeting = "¡Hola! ¿En qué puedo ayudarte?";
     voice = {
         provider: "elevenlabs",
         voice_id: "VmejBeYhbrcTPwDniox7",
@@ -280,7 +282,7 @@ class MyAgent extends GPTAgent {
 }
 ```
 
-**Channel fields:** `voice`, `language`, `stt`, `turnDetection`, `interruption`, `config`
+**Channel fields:** `voice`, `greeting`, `language`, `stt`, `turnDetection`, `interruption`, `config`
 
 ### Shared Defaults
 

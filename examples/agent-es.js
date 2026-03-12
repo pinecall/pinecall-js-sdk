@@ -1,8 +1,8 @@
 /**
  * Spanish voice agent — full config example.
  *
- * Shows how to configure every detail: TTS speed/stability,
- * STT keyterms, interruption thresholds, all as class fields.
+ * Shows per-channel voice, greeting, STT keyterms,
+ * interruption thresholds — all as class fields.
  *
  * Usage: pinecall run examples/agent-es.js
  */
@@ -12,8 +12,9 @@ import { GPTAgent, Phone } from "@pinecall/sdk/ai";
 class SpanishPhone extends Phone {
     number = "+13186330963";
     language = "es";
+    greeting = "¡Hola! ¿En qué te puedo ayudar?";
 
-    // Voice — full TTS config (not just the shortcut string)
+    // Voice — full TTS config
     voice = {
         provider: "elevenlabs",
         voice_id: "VmejBeYhbrcTPwDniox7",   // Lina - Carefree & Fresh
@@ -46,7 +47,6 @@ class AgentES extends GPTAgent {
     model = "gpt-4.1-nano";
     phone = new SpanishPhone();
     instructions = "Eres un asistente de voz amigable y conversacional. Responde de forma natural y útil, en 2-3 oraciones. Sé cálido y profesional.";
-    greeting = "¡Hola! ¿En qué te puedo ayudar?";
 }
 
 export default AgentES;
