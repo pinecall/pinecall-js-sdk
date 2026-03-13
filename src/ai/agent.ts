@@ -90,17 +90,24 @@ export class Agent {
     constructor(opts: AgentOptions) {
         this._pc = new Pinecall({ apiKey: opts.apiKey, url: opts.url });
 
+        // NOTE: We cannot read subclass field values here (e.g. this.stt, this.voice)
+        // because in JavaScript, class field initializers on subclasses run *after*
+        // super() returns. The agent config is built lazily in start() instead.
+        const id = this.constructor.name.toLowerCase().replace(/[^a-z0-9-]/g, "-");
+        this._core = this._pc.agent(id, {});
+
+        this._wireEvents();
+    }
+
+    /** @internal Build AgentConfig from current field values (called in start()). */
+    private _buildAgentConfig(): AgentConfig {
         const cfg: AgentConfig = {};
         if (this.voice) cfg.voice = this.voice;
         if (this.language) cfg.language = this.language;
         if (this.stt) cfg.stt = this.stt;
         if (this.turnDetection) cfg.turnDetection = this.turnDetection;
         if (this.interruption !== undefined) cfg.interruption = this.interruption;
-
-        const id = this.constructor.name.toLowerCase().replace(/[^a-z0-9-]/g, "-");
-        this._core = this._pc.agent(id, cfg);
-
-        this._wireEvents();
+        return cfg;
     }
 
     // ── Public API ───────────────────────────────────────────────────────
@@ -117,6 +124,12 @@ export class Agent {
 
     /** Connect and start listening. */
     async start(): Promise<void> {
+        // Apply agent-level config now — subclass fields are fully initialized at this point.
+        const agentCfg = this._buildAgentConfig();
+        if (Object.keys(agentCfg).length > 0) {
+            this._core.configure(agentCfg);
+        }
+
         const all: Channel[] = [];
         if (this.phone) all.push(this.phone);
         if (this.channels) all.push(...this.channels);

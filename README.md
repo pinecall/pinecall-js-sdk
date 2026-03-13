@@ -53,8 +53,7 @@ class Receptionist extends GPTAgent {
         number: "+13186330963",
         voice: "elevenlabs:EXAVITQu4vr4xnSDxMaL",
         greeting: "Hey! How can I help you?",
-        stt: "deepgram-flux",
-        turnDetection: "native",
+        // stt defaults to "deepgram-flux", turnDetection defaults to "native"
     });
     instructions = "You are a helpful voice assistant. Be concise.";
 }
@@ -517,6 +516,8 @@ stt: { provider: "deepgram", language: "en", model: "nova-3" }   // full
 #### Deepgram Flux
 
 English only. Ultra-low latency. Built-in turn detection.
+
+> **Default for `Phone`** — `new Phone({ number: "..." })` uses Flux automatically. Pair with `turnDetection: "native"` (also the `Phone` default) for end-to-end lowest latency.
 
 ```typescript
 stt: { provider: "deepgram-flux" }

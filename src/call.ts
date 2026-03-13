@@ -283,6 +283,16 @@ export class Call extends TypedEmitter<CallEvents> {
                     probability: event.probability as number,
                     latencyMs: event.latency_ms as number,
                 };
+                // Pre-track turn state so that when SDK user calls LLM inside
+                // the eager.turn handler, lastMessageId and turn text already
+                // reflect this turn — not the previous one.
+                // Without this, in_reply_to points to the PREVIOUS user.message,
+                // causing the LLM to respond with stale/wrong conversation context.
+                this.lastMessageId = turn.messageId;
+                this._lastTurnId = turn.id;
+                this._lastTurnText = turn.text;
+                this._lastTurnConfidence = 0;
+                this._lastTurnLanguage = undefined;
                 this.emit("eager.turn", turn);
                 break;
             }

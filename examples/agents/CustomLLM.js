@@ -10,44 +10,39 @@
 import { Agent, Phone } from "@pinecall/sdk/ai";
 
 class CustomLLM extends Agent {
-    phone = new Phone({
-        number: "+13186330963",
-        voice: "elevenlabs:EXAVITQu4vr4xnSDxMaL",
-        greeting: "Hey! I'm a custom agent. Ask me anything!",
-    });
+  phone = new Phone({
+    number: "+13186330963",
+    voice: "elevenlabs:EXAVITQu4vr4xnSDxMaL",
+    greeting: "Hey! I'm a custom agent. Ask me anything!",
+  });
 
-    instructions = "You are a helpful voice assistant.";
+  instructions = "You are a helpful voice assistant.";
 
-    // ── Your LLM handler ─────────────────────────────────────────────
+  async onTurn(turn, call, history) {
+    const reply = `You said: "${turn.text}"`;
+    call.reply(reply);
+    history.addAssistant(reply);
+  }
 
-    async onTurn(turn, call, history) {
-        // Replace this with your LLM call (Anthropic, Gemini, local, etc.)
-        const reply = `You said: "${turn.text}"`;
-        call.reply(reply);
-        history.addAssistant(reply);
-    }
+  onCallStarted(call) {
+    console.log(`  call.started  ${call.direction}  ${call.from} → ${call.to}`);
+  }
 
-    // ── Optional lifecycle hooks ─────────────────────────────────────
+  onCallEnded(call, reason) {
+    console.log(`  call.ended    reason=${reason}`);
+  }
 
-    onCallStarted(call) {
-        console.log(`  call.started  ${call.direction}  ${call.from} → ${call.to}`);
-    }
+  onUserMessage(event, call) {
+    console.log(`  user.message  "${event.text}"`);
+  }
 
-    onCallEnded(call, reason) {
-        console.log(`  call.ended    reason=${reason}`);
-    }
+  onBotFinished(event, call) {
+    console.log(`  bot.finished  ${event.duration_ms}ms`);
+  }
 
-    onUserMessage(event, call) {
-        console.log(`  user.message  "${event.text}"`);
-    }
-
-    onBotFinished(event, call) {
-        console.log(`  bot.finished  ${event.duration_ms}ms`);
-    }
-
-    onBotInterrupted(event, call) {
-        console.log(`  bot.interrupted  reason=${event.reason}`);
-    }
+  onBotInterrupted(event, call) {
+    console.log(`  bot.interrupted  reason=${event.reason}`);
+  }
 }
 
 export default CustomLLM;

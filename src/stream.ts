@@ -118,6 +118,18 @@ export class ReplyStream {
         if (this._aborted) return;
         this._aborted = true;
         this._ended = true;
+
+        // Tell the server this stream is done so it cleans up
+        // (_is_streaming, TTS flush, etc.)
+        if (this._started) {
+            this._send({
+                event: "bot.reply.stream",
+                call_id: this.callId,
+                message_id: this.messageId,
+                action: "end",
+            });
+        }
+
         this._fireComplete();
         this._ac.abort();
     }

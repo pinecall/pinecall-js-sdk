@@ -60,13 +60,41 @@ export class Phone extends Channel {
     override readonly type = "phone" as const;
     number = "";
 
+    // Phone defaults: deepgram-flux (English, ultra-low latency) + native turn detection
+    // (Flux has built-in end-of-turn detection, so "native" is the correct pairing).
+    // Override either field in the constructor config or by subclassing.
+    override stt: ChannelConfig["stt"] = "deepgram-flux";
+    override turnDetection: ChannelConfig["turnDetection"] = "native";
+
     constructor(numberOrConfig?: string | (Partial<ChannelConfig> & { number?: string }), overrides?: Partial<ChannelConfig>) {
         super();
         if (typeof numberOrConfig === "string") {
             this.number = numberOrConfig;
             if (overrides) Object.assign(this, overrides);
         } else if (numberOrConfig) {
+            _warnTypos(numberOrConfig);
             Object.assign(this, numberOrConfig);
+        }
+    }
+}
+
+/** @internal Warn about common config key typos so they don't silently get ignored. */
+function _warnTypos(cfg: Record<string, unknown>): void {
+    const known: Record<string, string> = {
+        sst: "stt",
+        sts: "stt",
+        turndetection: "turnDetection",
+        turn_detection: "turnDetection",
+        voiceId: "voice",
+        voice_id: "voice",
+    };
+    for (const key of Object.keys(cfg)) {
+        const suggestion = known[key] ?? known[key.toLowerCase()];
+        if (suggestion) {
+            console.warn(
+                `[Pinecall] Phone config: unknown key "${key}" — did you mean "${suggestion}"? ` +
+                `The value was ignored.`,
+            );
         }
     }
 }
