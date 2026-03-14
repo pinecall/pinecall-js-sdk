@@ -615,39 +615,64 @@ Any WebSocket client connects to `ws://localhost:4100` and receives JSON events:
 
 | Method | Description |
 |--------|-------------|
-| `new EventServer({ port?, host?, allowedOrigins? })` | Create server (default: `127.0.0.1:4100`) |
-| `server.attach(agent)` | Subscribe to agent events |
-| `server.detach(agent)` | Unsubscribe |
+| `new EventServer({ port?, host?, requireAuth?, allowedOrigins? })` | Create server |
+| `server.attach(agent)` → `string` | Subscribe + get agent token (`evt_...`) |
+| `server.detach(agent)` | Unsubscribe + revoke token |
+| `server.createToken(...agents)` → `string` | Multi-agent token (dashboard) |
+| `server.revokeToken(token)` | Revoke a token |
 | `server.start()` | Start listening |
 | `server.stop()` | Stop server |
-| `server.clients` | Number of connected WS clients |
-| `server.listening` | Whether server is running |
+| `server.clients` | Connected WS client count |
+| `server.listening` | Whether running |
 
 #### Production Security
 
-By default the EventServer binds to `127.0.0.1` (localhost only). For production, use `allowedOrigins` to restrict which domains can connect:
+Two layers: **origin allowlisting** + **per-agent tokens**.
 
 ```typescript
 const eventServer = new EventServer({
   port: 4100,
-  host: "0.0.0.0",                // expose to network
+  host: "0.0.0.0",
+  requireAuth: true,                 // require token in Authorization header
   allowedOrigins: [
-    "https://dashboard.myapp.com", // your dashboard domain
-    "http://localhost:3000",        // local dev
+    "https://dashboard.myapp.com",
+    "http://localhost:3000",
   ],
+});
+
+// Each attach() returns a unique token scoped to that agent
+const salesToken = eventServer.attach(salesAgent);     // "evt_a1b2c3..."
+const supportToken = eventServer.attach(supportAgent); // "evt_d4e5f6..."
+
+// Or create a multi-agent token for the admin dashboard
+const adminToken = eventServer.createToken(salesAgent, supportAgent);
+eventServer.start();
+```
+
+Clients connect with the token:
+
+```typescript
+// Agent-scoped: only sees events from "sales" agent
+const ws = new WebSocket("ws://localhost:4100", {
+  headers: { Authorization: `Bearer ${salesToken}` }
+});
+
+// Admin: sees all agents
+const adminWs = new WebSocket("ws://localhost:4100", {
+  headers: { Authorization: `Bearer ${adminToken}` }
 });
 ```
 
-Connections from unlisted origins are rejected at the WebSocket handshake.
-
-> **Recommended architecture:** Run the EventServer in the same process as your Express/Fastify backend. Your backend handles auth (JWT, sessions) for the dashboard, and the EventServer runs as an internal sidecar — never exposed directly to the internet.
+- **Without `requireAuth`** (default): all clients see all events — ideal for local dev
+- **With `requireAuth: true`**: token required, events scoped to token's agents
+- **`allowedOrigins`**: rejected at handshake if origin not in list
 
 ```
 ┌─────────────────────────────────────────────┐
 │              Your Server (Node.js)          │
 │                                              │
 │  Express :3000 ──── REST API (auth, CRUD)   │
-│  EventServer :4100 ── WS events (origins)   │
+│  EventServer :4100 ── WS events (tokens)    │
 │  Pinecall SDK ────── voice agent runtime    │
 └─────────────────────────────────────────────┘
          ↑                    ↑
