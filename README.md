@@ -577,53 +577,79 @@ const voices = await pc.fetchVoices({ provider: "cartesia" });
 const phones = await pc.fetchPhones();
 ```
 
-### EventServer — WebSocket Event Bridge
+### EventServer — WebSocket + REST API
 
-Expose all agent events over a local WebSocket so any web UI can consume them. **Opt-in only** — import from `@pinecall/sdk/server`:
+Expose all agent events over WebSocket and manage agents via REST API. **Opt-in** — import from `@pinecall/sdk/server`:
 
 ```typescript
 import { EventServer } from "@pinecall/sdk/server";
 
-const server = new EventServer({ port: 4100 });   // default: 127.0.0.1:4100
-server.attach(agent);                              // subscribe to all events
+const server = new EventServer({
+  port: 4100,          // WS port (default: 4100)
+  apiPort: 3000,       // REST API port (optional)
+  host: "127.0.0.1",   // bind address
+  requireAuth: true,   // require token in headers
+  pinecall: pc,        // Pinecall client (enables POST /agents, GET /phones)
+});
+
+const token = server.attach(agent);  // returns "evt_..." token
 server.start();
-```
-
-Any WebSocket client connects to `ws://localhost:4100` and receives JSON events:
-
-```jsonc
-{ "event": "call.started", "agent_id": "support", "call_id": "CA...", "from": "+1...", "to": "+1...", "direction": "inbound" }
-{ "event": "user.message", "agent_id": "support", "call_id": "CA...", "text": "Hello" }
-{ "event": "llm.token",   "agent_id": "support", "call_id": "CA...", "token": "Hi" }
-{ "event": "bot.word",     "agent_id": "support", "call_id": "CA...", "word": "there" }
-{ "event": "call.ended",   "agent_id": "support", "call_id": "CA...", "reason": "completed" }
 ```
 
 #### Events Forwarded
 
+All events are JSON with `event`, `agent_id`, and (when applicable) `call_id`:
+
+```jsonc
+{ "event": "call.started", "agent_id": "support", "call_id": "CA...", "from": "+1...", "direction": "inbound" }
+{ "event": "user.message", "agent_id": "support", "call_id": "CA...", "text": "Hello" }
+{ "event": "llm.token",   "agent_id": "support", "call_id": "CA...", "token": "Sure" }
+{ "event": "call.muted",   "agent_id": "support", "call_id": "CA..." }
+{ "event": "call.ended",   "agent_id": "support", "call_id": "CA...", "reason": "completed" }
+```
+
 | Category | Events |
 |----------|--------|
 | **Call lifecycle** | `call.started`, `call.ended` |
-| **Channels** | `channel.added`, `channel.removed` |
+| **Call state** | `call.held`, `call.unheld`, `call.muted`, `call.unmuted` |
+| **Channels** | `channel.added`, `channel.configured`, `channel.removed` |
 | **Speech** | `speech.started`, `speech.ended`, `user.speaking`, `user.message` |
 | **Turns** | `eager.turn`, `turn.end`, `turn.pause`, `turn.continued`, `turn.resumed` |
 | **Bot** | `bot.speaking`, `bot.word`, `bot.finished`, `bot.interrupted` |
 | **Replies** | `message.confirmed`, `reply.rejected` |
-| **LLM** | `llm.start`, `llm.token`, `llm.done`, `llm.tool_call`, `llm.tool_result` |
+| **Metrics** | `audio.metrics` |
+| **LLM** | `llm.start`, `llm.token`, `llm.done`, `llm.tool_call`, `llm.tool_result`, `llm.error` |
 
-#### API
+#### SDK API
 
 | Method | Description |
 |--------|-------------|
-| `new EventServer({ port?, host?, requireAuth?, allowedOrigins? })` | Create server |
+| `new EventServer({ port?, apiPort?, host?, requireAuth?, allowedOrigins?, pinecall? })` | Create server |
 | `server.attach(agent)` → `string` | Subscribe + get agent token (`evt_...`) |
 | `server.detach(agent)` | Unsubscribe + revoke token |
 | `server.createToken(...agents)` → `string` | Multi-agent token (dashboard) |
 | `server.revokeToken(token)` | Revoke a token |
-| `server.start()` | Start listening |
-| `server.stop()` | Stop server |
+| `server.start()` | Start WS + REST servers |
+| `server.stop()` | Stop all servers |
 | `server.clients` | Connected WS client count |
 | `server.listening` | Whether running |
+
+#### REST API (built-in)
+
+Available via `pinecall server` or `EventServer({ apiPort })`:
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/agents` | List all agents |
+| `POST` | `/agents` | Deploy new agent `{ name, voice?, stt?, ... }` |
+| `PATCH` | `/agents/:name` | Configure agent `{ voice?, stt?, ... }` |
+| `DELETE` | `/agents/:name` | Remove agent |
+| `POST` | `/agents/:name/dial` | Outbound call `{ to, from, greeting? }` |
+| `GET` | `/calls` | List active calls |
+| `PATCH` | `/calls/:id` | Configure call `{ voice?, language? }` |
+| `POST` | `/calls/:id/hangup` | Hang up call |
+| `GET` | `/phones` | List account phone numbers |
+| `GET` | `/voices?provider=elevenlabs` | List TTS voices |
 
 #### Production Security
 
@@ -633,23 +659,15 @@ Two layers: **origin allowlisting** + **per-agent tokens**.
 const eventServer = new EventServer({
   port: 4100,
   host: "0.0.0.0",
-  requireAuth: true,                 // require token in Authorization header
-  allowedOrigins: [
-    "https://dashboard.myapp.com",
-    "http://localhost:3000",
-  ],
+  requireAuth: true,
+  allowedOrigins: ["https://dashboard.myapp.com", "http://localhost:3000"],
 });
 
-// Each attach() returns a unique token scoped to that agent
 const salesToken = eventServer.attach(salesAgent);     // "evt_a1b2c3..."
 const supportToken = eventServer.attach(supportAgent); // "evt_d4e5f6..."
-
-// Or create a multi-agent token for the admin dashboard
 const adminToken = eventServer.createToken(salesAgent, supportAgent);
 eventServer.start();
 ```
-
-Clients connect with the token:
 
 ```typescript
 // Agent-scoped: only sees events from "sales" agent
@@ -668,13 +686,13 @@ const adminWs = new WebSocket("ws://localhost:4100", {
 - **`allowedOrigins`**: rejected at handshake if origin not in list
 
 ```
-┌─────────────────────────────────────────────┐
-│              Your Server (Node.js)          │
+┌──────────────────────────────────────────────┐
+│              Your Server (Node.js)           │
 │                                              │
-│  Express :3000 ──── REST API (auth, CRUD)   │
-│  EventServer :4100 ── WS events (tokens)    │
-│  Pinecall SDK ────── voice agent runtime    │
-└─────────────────────────────────────────────┘
+│  REST API :3000 ── agents, calls, phones     │
+│  WS Events :4100 ── real-time events         │
+│  Pinecall SDK ──── voice agent runtime       │
+└──────────────────────────────────────────────┘
          ↑                    ↑
     Dashboard UI         Pinecall Cloud
   (your domain)        (voice infra)
@@ -693,43 +711,24 @@ ws.onmessage = (e) => {
   switch (event.event) {
     case "server.connected": console.log("Agents:", event.agents); break;
     case "call.started":     addCall(event); break;
-    case "user.message":     addMessage(event.call_id, "user", event.text); break;
+    case "user.message":     showTranscript(event.call_id, event.text); break;
     case "llm.token":        appendToken(event.call_id, event.token); break;
+    case "bot.speaking":     showBotSpeaking(event.call_id); break;
     case "bot.word":         addWord(event.call_id, event.word); break;
+    case "call.held":        markHeld(event.call_id); break;
+    case "call.muted":       markMuted(event.call_id); break;
+    case "audio.metrics":    updateMetrics(event.call_id, event); break;
     case "call.ended":       removeCall(event.call_id); break;
-    case "action.ok":        console.log("OK:", event.action); break;
-    case "error":            console.error(event.message); break;
   }
 };
 
 // ── Commands: UI → Server ────────────────────────────────────
-
-// Dial a number
-ws.send(JSON.stringify({
-  action: "dial",
-  agent_id: "sales",
-  to: "+1234567890",
-  from: "+0987654321",
-  greeting: "Hello, this is support calling."
-}));
-
-// Hang up a call
+ws.send(JSON.stringify({ action: "dial", agent_id: "sales", to: "+1234567890", from: "+0987654321" }));
 ws.send(JSON.stringify({ action: "hangup", call_id: "CA..." }));
-
-// Configure mid-call
-ws.send(JSON.stringify({
-  action: "configure",
-  call_id: "CA...",
-  voice: "elevenlabs:newvoice",
-  language: "es"
-}));
-
-// List agents and calls
-ws.send(JSON.stringify({ action: "agents" }));
-ws.send(JSON.stringify({ action: "calls" }));
+ws.send(JSON.stringify({ action: "configure", call_id: "CA...", voice: "elevenlabs:newvoice" }));
+ws.send(JSON.stringify({ action: "agents" }));   // → agents.list response
+ws.send(JSON.stringify({ action: "calls" }));     // → calls.list response
 ```
-
-**Commands Reference:**
 
 | Action | Payload | Response |
 |--------|---------|----------|
@@ -744,39 +743,40 @@ ws.send(JSON.stringify({ action: "calls" }));
 | | `pinecall run` | `pinecall server` |
 |---|---|---|
 | **Purpose** | Dev & debugging | Production |
-| **UI** | Interactive TUI with `/commands` | Headless (no readline) |
-| **Events** | Console log with colors | WS broadcast + REST API |
-| **Multi-agent** | All events in one TUI | Each agent gets a token |
+| **UI** | Interactive TUI | Headless |
+| **Events** | Console + colors | WS + REST API |
+| **Multi-agent** | One TUI | Each agent gets token |
 
 ```bash
-# Dev mode — interactive TUI
+# Dev mode — interactive TUI with slash commands
 pinecall run Agent.js
 pinecall run ./agents
 
 # Server mode — headless with REST + WS
 pinecall server Agent.js
-pinecall server ./agents
-pinecall server ./agents --port=4100 --api-port=3000 --host=0.0.0.0
+pinecall server ./agents --port=4100 --api-port=3000
 ```
 
-#### REST API (built-in)
+#### CLI Slash Commands
 
-When using `pinecall server` or `EventServer({ apiPort })`, these endpoints are available:
+Available inside `pinecall run`:
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/agents` | List all agents |
-| `POST` | `/agents` | Deploy new agent `{ name, voice?, stt?, ... }` |
-| `PATCH` | `/agents/:name` | Configure agent `{ voice?, stt?, ... }` |
-| `DELETE` | `/agents/:name` | Remove agent |
-| `POST` | `/agents/:name/dial` | Outbound call `{ to, from, greeting? }` |
-| `GET` | `/calls` | List active calls |
-| `PATCH` | `/calls/:id` | Configure call `{ voice?, language? }` |
-| `POST` | `/calls/:id/hangup` | Hang up call |
+| Command | Description |
+|---------|-------------|
+| `/phones` | List account phone numbers |
+| `/voices [provider]` | List TTS voices |
+| `/play <name\|id>` | Play voice preview (Ctrl+C to stop) |
+| `/dial [agent] +number ["greeting"]` | Make outbound call |
+| `/calls` | List active calls |
+| `/switch <1\|sid>` | Select active call |
+| `/config <key> <value>` | Change call config (voice, stt, turn, lang) |
+| `/hangup` | Hang up selected call |
+| `/hold` / `/unhold` | Hold / resume call |
+| `/mute` / `/unmute` | Mute / unmute microphone |
+| `/history` | Show raw LLM history (JSON) |
+| `/help` | Context-aware help (shows call commands only when active) |
 
 #### Vapi-Mode: Custom Server
-
-For full control, use the SDK directly with your own Express server:
 
 ```typescript
 import { Pinecall } from "@pinecall/sdk";
@@ -786,16 +786,14 @@ import db from "./db.js";
 const pc = new Pinecall({ apiKey: process.env.PINECALL_API_KEY });
 await pc.connect();
 
-// EventServer with REST API built-in
 const eventServer = new EventServer({
   port: 4100,
   apiPort: 3000,
   host: "0.0.0.0",
   requireAuth: true,
-  pinecall: pc,           // enables POST /agents to deploy agents
+  pinecall: pc,
 });
 
-// Load agents from DB
 for (const config of await db.agents.findAll()) {
   const agent = pc.agent(config.name, config);
   if (config.phone) agent.addChannel("phone", config.phone);
