@@ -52,6 +52,7 @@ function handleHelp(ctx: CommandContext): void {
     log(`${DIM("── General ──")}`);
     log(`  ${MUTED("/phones")}     ${DIM("List phone numbers")}`);
     log(`  ${MUTED("/voices")}     ${DIM("List TTS voices")}`);
+    log(`  ${MUTED("/play")}       ${DIM("Play voice preview")} ${DIM("<name|id> [provider]")}`);
     log(`  ${MUTED("/dial")}       ${DIM("Outbound call")} ${DIM("[agent] +number [\"greeting\"]")}`);
 
     if (hasCalls) {
@@ -355,12 +356,109 @@ async function handleVoices(ctx: CommandContext, args: string[]): Promise<void> 
     }
 }
 
+// ── /play command ───────────────────────────────────────────────────────
+
+/** Cache voices across /play calls to avoid re-fetching. */
+let _voiceCache: { provider: string; voices: any[] } | null = null;
+
+async function handlePlay(ctx: CommandContext, args: string[]): Promise<void> {
+    const log = ctx.log ?? logLine;
+    const query = args.join(" ").trim();
+
+    if (!query) {
+        log(`${DIM("Usage: /play <voice name or ID> [provider]")}`);
+        log(`  ${DIM("Examples: /play Sarah · /play adam · /play EXAVITQu4vr4xnSDxMaL")}`);
+        return;
+    }
+
+    // Extract provider from last arg if it looks like one
+    let provider = "elevenlabs";
+    const knownProviders = ["elevenlabs", "cartesia", "deepgram"];
+    const lastArg = args[args.length - 1]?.toLowerCase();
+    const searchTerms = knownProviders.includes(lastArg)
+        ? (provider = lastArg, args.slice(0, -1).join(" ").trim())
+        : query;
+
+    // Fetch voices (use cache if same provider)
+    if (!_voiceCache || _voiceCache.provider !== provider) {
+        log(`${DIM(`Fetching ${provider} voices...`)}`);
+        try {
+            const voiceList = await fetchVoices({ provider });
+            _voiceCache = { provider, voices: voiceList };
+        } catch (err) {
+            log(`${ERR("Failed to fetch voices:")} ${err}`);
+            return;
+        }
+    }
+
+    const voices = _voiceCache.voices;
+    const lower = (searchTerms || query).toLowerCase();
+
+    // Fuzzy match: exact id → exact name → starts with → includes
+    let match = voices.find((v: any) => v.id === query);
+    if (!match) match = voices.find((v: any) => v.name.toLowerCase() === lower);
+    if (!match) match = voices.find((v: any) => v.name.toLowerCase().startsWith(lower));
+    if (!match) match = voices.find((v: any) => v.name.toLowerCase().includes(lower));
+    if (!match) match = voices.find((v: any) => v.id.toLowerCase().startsWith(lower));
+
+    if (!match) {
+        log(`${ERR("No voice found matching:")} ${query}`);
+        log(`  ${DIM("Try /voices to see available voices")}`);
+        return;
+    }
+
+    if (!match.preview_url) {
+        log(`${WARN("No preview available for")} ${ACCENT(match.name)} ${DIM(`(${match.id})`)}`);
+        return;
+    }
+
+    log(`${DIM("▶")} Playing ${ACCENT(match.name)} ${DIM(`(${match.id})`)}`);
+    if (match.gender) log(`  ${DIM("Gender:")} ${match.gender}`);
+    if (match.description) log(`  ${DIM(match.description.slice(0, 80))}`);
+
+    // Download and play
+    try {
+        const { execSync } = await import("node:child_process");
+        const { writeFileSync, unlinkSync } = await import("node:fs");
+        const { tmpdir } = await import("node:os");
+        const path = await import("node:path");
+
+        const tmpFile = path.join(tmpdir(), `pinecall-preview-${Date.now()}.mp3`);
+
+        const response = await fetch(match.preview_url);
+        if (!response.ok) {
+            log(`${ERR("Failed to download preview:")} HTTP ${response.status}`);
+            return;
+        }
+        const buffer = Buffer.from(await response.arrayBuffer());
+        writeFileSync(tmpFile, buffer);
+
+        // Play with afplay (macOS) or aplay (Linux)
+        try {
+            execSync(`afplay "${tmpFile}"`, { stdio: "ignore" });
+        } catch {
+            try {
+                execSync(`aplay "${tmpFile}"`, { stdio: "ignore" });
+            } catch {
+                log(`${WARN("Could not play audio. Preview URL:")}`);
+                log(`  ${DIM(match.preview_url)}`);
+            }
+        }
+
+        try { unlinkSync(tmpFile); } catch { /* ignore */ }
+        log(`${OK("✓")} Done`);
+    } catch (err) {
+        log(`${ERR("Playback error:")} ${err}`);
+    }
+}
+
 // ── Command registry ─────────────────────────────────────────────────────
 
 const commands: Record<string, CommandDef> = {
     "/help":    { description: "Show available commands", handler: handleHelp },
     "/phones":  { description: "List phone numbers", handler: handlePhones },
     "/voices":  { description: "List TTS voices", usage: "[provider]", handler: handleVoices },
+    "/play":    { description: "Play voice preview", usage: "<name|id> [provider]", handler: handlePlay },
     "/calls":   { description: "List active calls", handler: handleCalls },
     "/switch":  { description: "Select active call", usage: "<1|sid>", handler: handleSwitch },
     "/config":  { description: "Change call config", usage: "<voice|stt|turn|lang> <val>", handler: handleConfig },

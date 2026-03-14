@@ -22,7 +22,7 @@ import { MUTED, DIM } from "./theme.js";
 // ── Available commands for tab completion ────────────────────────────────
 
 const COMMAND_LIST = [
-    "/help", "/phones", "/voices",
+    "/help", "/phones", "/voices", "/play",
     "/calls", "/switch", "/config", "/dial",
     "/hangup", "/hold", "/unhold",
     "/mute", "/unmute", "/history",
