@@ -132,7 +132,24 @@ async function runSingle(
     env: ReturnType<typeof resolveEnv>,
 ): Promise<void> {
     const fullPath = await resolveAgentFile(input);
-    const { AgentClass, name } = await loadAgentClass(fullPath);
+
+    // Try loading as a class-based agent
+    let AgentClass: any;
+    let name: string;
+    try {
+        const mod = await import(fullPath);
+        const exported = mod.default ?? mod;
+        if (typeof exported === "function") {
+            AgentClass = exported;
+            name = exported.name || (await import("node:path")).basename(fullPath, (await import("node:path")).extname(fullPath));
+        } else {
+            // Script mode — the import already executed the file.
+            // Just keep the process alive (the script manages its own lifecycle).
+            return;
+        }
+    } catch (err) {
+        throw new CliError(`Failed to load agent file: ${fullPath}\n${err}`);
+    }
 
     const agent = new AgentClass({
         apiKey: env.apiKey,
