@@ -218,13 +218,27 @@ export class Call extends TypedEmitter<CallEvents> {
         this._send({ event: "call.dtmf", call_id: this.id, digits });
     }
 
-    /** Update config for this specific session. */
-    updateConfig(config: Partial<SessionConfig>): void {
+    /**
+     * Update config for this call (mid-call). Changes take effect immediately.
+     *
+     * @example
+     * call.configure({ voice: "cartesia:abc123" });
+     * call.configure({ stt: "deepgram:nova-3:fr", language: "fr" });
+     * call.configure({ turnDetection: { mode: "smart_turn", silenceMs: 600 } });
+     */
+    configure(opts: Record<string, unknown>): void {
         this._send({
-            event: "update_session_config",
+            event: "session.configure",
             session_id: this.id,
-            config,
+            ...opts,
         });
+    }
+
+    /**
+     * @deprecated Use `call.configure()` instead.
+     */
+    updateConfig(config: Partial<SessionConfig>): void {
+        this.configure({ config });
     }
 
     // ── Hold / Mute ────────────────────────────────────────────────────

@@ -449,7 +449,108 @@ agent.on("eager.turn", async (turn, call) => {
 
 ### Conversation History
 
-When using `GPTAgent` (or `Agent` with `model`), conversation history is managed **automatically on the server**. The server tracks all messages, interruptions, and continuations to maintain correct LLM context — no client-side setup needed.
+History is managed **automatically on the server** — all user messages, bot responses, tool calls, and interruptions are tracked. The SDK provides methods on `Call` to read and manipulate the history mid-call:
+
+```typescript
+// Fetch the current conversation history (OpenAI-compatible format)
+const messages = await call.getHistory();
+// [{ role: "system", content: "..." }, { role: "user", content: "Hello" }, ...]
+
+// Inject context (e.g. CRM data, prior interactions)
+await call.addHistory([
+  { role: "system", content: "Customer: Bernardo Castro, VIP tier, last order: March 10" },
+  { role: "user",   content: "I called about my order" },
+  { role: "assistant", content: "Looking into your order now..." },
+]);
+
+// Update the system prompt mid-call (takes effect on next LLM request)
+await call.setInstructions("You are now in Spanish support mode. Respond in Spanish.");
+
+// Clear all messages (system prompt is preserved)
+await call.clearHistory();
+```
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `call.getHistory()` | `{ role, content }[]` | Fetch current messages in OpenAI format |
+| `call.addHistory(messages)` | `number` (count) | Inject messages into history |
+| `call.clearHistory()` | `number` (count) | Clear all messages (system prompt preserved) |
+| `call.setInstructions(text)` | `number` (count) | Update system prompt mid-call |
+
+### Dynamic Agents — `pc.deploy()`
+
+Create agents at runtime from plain config objects — no class files needed:
+
+```typescript
+const pc = new Pinecall({ apiKey: "pk_..." });
+await pc.connect();
+
+const agent = pc.deploy("support", {
+  model: "gpt-4.1-nano",
+  voice: "elevenlabs:EXAVITQu4vr4xnSDxMaL",
+  language: "es",
+  instructions: "You are a customer support agent. Be helpful and concise.",
+  phones: ["+13186330963"],
+});
+
+agent.on("call.started", (call) => console.log("Call started!"));
+```
+
+Agents are stored client-side and **auto-restored on server restart** — the `Reconnector` re-creates all agents and re-registers their phone channels automatically.
+
+#### Building a Dashboard (Vapi-like)
+
+```typescript
+// Load agents from YOUR database on startup
+const configs = await db.agents.findAll();
+const pc = new Pinecall({ apiKey: "pk_..." });
+await pc.connect();
+
+for (const config of configs) {
+  pc.deploy(config.name, config);
+}
+
+// User creates new agent from dashboard UI
+app.post("/agents", async (req, res) => {
+  await db.agents.create(req.body);
+  pc.deploy(req.body.name, req.body);
+  res.json({ ok: true });
+});
+
+// User updates agent live
+app.patch("/agents/:name", async (req, res) => {
+  await db.agents.update(req.params.name, req.body);
+  pc.agents.get(req.params.name)?.configure(req.body); // Hot-reload
+  res.json({ ok: true });
+});
+```
+
+### Live Configuration
+
+Update voice, STT, turn detection, or model **mid-call**:
+
+```typescript
+// Change voice mid-call
+call.configure({ voice: "cartesia:abc123" });
+
+// Switch STT language
+call.configure({ stt: "deepgram:nova-3:fr", language: "fr" });
+
+// Adjust turn detection sensitivity
+call.configure({ turnDetection: { mode: "smart_turn", silenceMs: 600 } });
+
+// Update system prompt (takes effect on next LLM request)
+await call.setInstructions("Now respond in French.");
+```
+
+Update agent defaults for **all future calls**:
+
+```typescript
+agent.configure({
+  voice: "elevenlabs:newVoice",
+  model: "gpt-4.1",
+});
+```
 
 ### Multi-Agent
 

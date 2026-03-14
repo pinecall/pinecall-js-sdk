@@ -59,6 +59,22 @@ export type {
     ChannelConfig,
 } from "./agent.js";
 
+// ─── Deploy config ───────────────────────────────────────────────────────
+
+/** Config for `pc.deploy()` — all fields are optional. */
+export interface DeployConfig extends AgentConfig {
+    /** LLM model (e.g. "gpt-4.1-nano"). Enables server-side LLM. */
+    model?: string;
+    /** System prompt for the LLM. */
+    instructions?: string;
+    /** Phone numbers to register as channels. */
+    phones?: string[];
+    /** Tool definitions with handlers. */
+    tools?: Record<string, unknown>;
+    /** Greeting message sent on call start. */
+    greeting?: string;
+}
+
 // ─── Event map ───────────────────────────────────────────────────────────
 
 export interface PinecallEvents {
@@ -267,6 +283,51 @@ export class Pinecall extends TypedEmitter<PinecallEvents> {
                 agent_id: id,
                 ...buildShortcutPayload(config),
             });
+        }
+
+        return agent;
+    }
+
+    /**
+     * Deploy an agent from a plain config — no class file needed.
+     *
+     * Creates the agent, configures model/voice/instructions, and registers
+     * phone channels. Agent config is stored client-side and auto-restored
+     * on reconnect.
+     *
+     * @example
+     * const agent = pc.deploy("support", {
+     *   model: "gpt-4.1-nano",
+     *   voice: "elevenlabs:EXAVITQu4vr4xnSDxMaL",
+     *   instructions: "Be helpful and concise.",
+     *   phones: ["+13186330963"],
+     * });
+     *
+     * agent.on("call.started", (call) => { ... });
+     */
+    deploy(name: string, config: DeployConfig): Agent {
+        // Extract deploy-specific fields from agent config
+        const { phones, model, instructions, tools, greeting, ...agentConfig } = config;
+
+        // Build LLM config from model field
+        if (model) {
+            const [engine, ...rest] = model.split(":");
+            agentConfig.llm = {
+                engine: engine || "openai",
+                model: rest.join(":") || model,
+                enabled: true,
+                ...(instructions ? { instructions } : {}),
+            };
+        }
+
+        // Create the core agent with agentConfig
+        const agent = this.agent(name, agentConfig);
+
+        // Register phone channels
+        if (phones) {
+            for (const phone of phones) {
+                agent.addChannel("phone", phone);
+            }
         }
 
         return agent;

@@ -33,7 +33,7 @@
 
 // Core classes
 export { Pinecall, PinecallError } from "./client.js";
-export type { PinecallOptions, PinecallEvents } from "./client.js";
+export type { PinecallOptions, PinecallEvents, DeployConfig } from "./client.js";
 
 export { Agent } from "./agent.js";
 export type {
