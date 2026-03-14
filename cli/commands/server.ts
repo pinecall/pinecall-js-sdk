@@ -94,8 +94,9 @@ export async function server(argv: string[]): Promise<void> {
 
     // Start EventServer (REST + WS on single port)
     const { EventServer } = await import("@pinecall/sdk/server");
-    const eventServer = new EventServer({ port, host });
+    let pc: any = null;
 
+    const agents: any[] = [];
     for (const file of files) {
         const { AgentClass, name } = await loadAgentClass(file);
 
@@ -106,6 +107,13 @@ export async function server(argv: string[]): Promise<void> {
         });
 
         await agent.start();
+        if (!pc) pc = agent.pc;  // grab Pinecall client from first agent
+        agents.push({ agent, name });
+    }
+
+    const eventServer = new EventServer({ port, host, pinecall: pc });
+
+    for (const { agent, name } of agents) {
         const token = eventServer.attach(agent.core);
 
         const phone = agent.phone?.number ?? "—";
