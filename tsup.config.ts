@@ -23,6 +23,17 @@ export default defineConfig([
         minify: false,
         external: ["openai"],
     },
+    // Server subpath: EventServer (ESM + CJS + DTS, ws external)
+    {
+        entry: { "server/index": "src/server/index.ts" },
+        format: ["esm", "cjs"],
+        dts: true,
+        splitting: false,
+        sourcemap: true,
+        target: "es2020",
+        minify: false,
+        external: ["ws"],
+    },
     // CLI binary (ESM, bundled with shebang)
     {
         entry: { "cli/index": "cli/index.ts" },

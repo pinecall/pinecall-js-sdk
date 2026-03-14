@@ -29,6 +29,16 @@
         "types": "./dist/ai/index.d.cts",
         "default": "./dist/ai/index.cjs"
       }
+    },
+    "./server": {
+      "import": {
+        "types": "./dist/server/index.d.ts",
+        "default": "./dist/server/index.js"
+      },
+      "require": {
+        "types": "./dist/server/index.d.cts",
+        "default": "./dist/server/index.cjs"
+      }
     }
   },
   "files": [
@@ -74,6 +84,7 @@
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^25.4.0",
+    "@types/ws": "^8.18.1",
     "tsup": "^8.0.0",
     "tsx": "^4.21.0",
     "typescript": "^5.4.0",

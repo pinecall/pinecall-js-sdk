@@ -577,6 +577,70 @@ const voices = await pc.fetchVoices({ provider: "cartesia" });
 const phones = await pc.fetchPhones();
 ```
 
+### EventServer — WebSocket Event Bridge
+
+Expose all agent events over a local WebSocket so any web UI can consume them. **Opt-in only** — import from `@pinecall/sdk/server`:
+
+```typescript
+import { EventServer } from "@pinecall/sdk/server";
+
+const server = new EventServer({ port: 4100 });   // default: 127.0.0.1:4100
+server.attach(agent);                              // subscribe to all events
+server.start();
+```
+
+Any WebSocket client connects to `ws://localhost:4100` and receives JSON events:
+
+```jsonc
+{ "event": "call.started", "agent_id": "support", "call_id": "CA...", "from": "+1...", "to": "+1...", "direction": "inbound" }
+{ "event": "user.message", "agent_id": "support", "call_id": "CA...", "text": "Hello" }
+{ "event": "llm.token",   "agent_id": "support", "call_id": "CA...", "token": "Hi" }
+{ "event": "bot.word",     "agent_id": "support", "call_id": "CA...", "word": "there" }
+{ "event": "call.ended",   "agent_id": "support", "call_id": "CA...", "reason": "completed" }
+```
+
+#### Events Forwarded
+
+| Category | Events |
+|----------|--------|
+| **Call lifecycle** | `call.started`, `call.ended` |
+| **Channels** | `channel.added`, `channel.removed` |
+| **Speech** | `speech.started`, `speech.ended`, `user.speaking`, `user.message` |
+| **Turns** | `eager.turn`, `turn.end`, `turn.pause`, `turn.continued`, `turn.resumed` |
+| **Bot** | `bot.speaking`, `bot.word`, `bot.finished`, `bot.interrupted` |
+| **Replies** | `message.confirmed`, `reply.rejected` |
+| **LLM** | `llm.start`, `llm.token`, `llm.done`, `llm.tool_call`, `llm.tool_result` |
+
+#### API
+
+| Method | Description |
+|--------|-------------|
+| `new EventServer({ port?, host? })` | Create server (default: `127.0.0.1:4100`) |
+| `server.attach(agent)` | Subscribe to agent events |
+| `server.detach(agent)` | Unsubscribe |
+| `server.start()` | Start listening |
+| `server.stop()` | Stop server |
+| `server.clients` | Number of connected WS clients |
+| `server.listening` | Whether server is running |
+
+#### React Dashboard Example
+
+```typescript
+// Connect from any web UI
+const ws = new WebSocket("ws://localhost:4100");
+
+ws.onmessage = (e) => {
+  const event = JSON.parse(e.data);
+  switch (event.event) {
+    case "call.started":  addCall(event); break;
+    case "user.message":  addMessage(event.call_id, "user", event.text); break;
+    case "llm.token":     appendToken(event.call_id, event.token); break;
+    case "bot.word":      addWord(event.call_id, event.word); break;
+    case "call.ended":    removeCall(event.call_id); break;
+  }
+};
+```
+
 ---
 
 ## Configuration
