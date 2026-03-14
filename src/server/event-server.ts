@@ -25,8 +25,6 @@ import type { Pinecall } from "../client.js";
 export interface EventServerOptions {
     /** Port to listen on for WebSocket. Default: 4100 */
     port?: number;
-    /** Port for REST API. When set, starts an HTTP server with agent/call endpoints. */
-    apiPort?: number;
     /** Host to bind to. Default: "127.0.0.1" (localhost only) */
     host?: string;
     /**
@@ -81,7 +79,6 @@ export class EventServer {
     private _wss: WebSocketServer | null = null;
     private _http: ReturnType<typeof createServer> | null = null;
     private _port: number;
-    private _apiPort: number | null;
     private _host: string;
     private _agents: Set<Agent> = new Set();
     private _allowedOrigins: string[] | null;
@@ -92,7 +89,6 @@ export class EventServer {
 
     constructor(opts: EventServerOptions = {}) {
         this._port = opts.port ?? 4100;
-        this._apiPort = opts.apiPort ?? null;
         this._host = opts.host ?? "127.0.0.1";
         this._allowedOrigins = opts.allowedOrigins ?? null;
         this._requireAuth = opts.requireAuth ?? false;
@@ -109,95 +105,11 @@ export class EventServer {
         return this._wss !== null;
     }
 
-    /** Start the WebSocket server. */
+    /** Start the server (HTTP + WebSocket on the same port). */
     start(): void {
         if (this._wss) return;
 
-        this._wss = new WebSocketServer({
-            port: this._port,
-            host: this._host,
-            verifyClient: (info: { origin: string; req: IncomingMessage }, cb: (ok: boolean, code?: number, msg?: string) => void) => {
-                // Origin check
-                if (this._allowedOrigins && !this._allowedOrigins.includes(info.origin)) {
-                    cb(false, 403, "Origin not allowed");
-                    return;
-                }
-
-                // Token check
-                if (this._requireAuth) {
-                    const auth = info.req.headers["authorization"];
-                    if (!auth || !auth.startsWith("Bearer ")) {
-                        cb(false, 401, "Missing Authorization header");
-                        return;
-                    }
-                    const token = auth.slice(7);
-                    if (!this._tokens.has(token)) {
-                        cb(false, 401, "Invalid token");
-                        return;
-                    }
-                }
-
-                cb(true);
-            },
-        });
-
-        this._wss.on("connection", (ws: AuthedSocket, req: IncomingMessage) => {
-            // Determine scope from token
-            const auth = req.headers["authorization"];
-            if (auth?.startsWith("Bearer ")) {
-                const token = auth.slice(7);
-                ws._agentScope = this._tokens.get(token) ?? null;
-            } else {
-                ws._agentScope = null; // no token = all agents (when auth not required)
-            }
-
-            // Send connection ack with visible agents
-            const visibleAgents = ws._agentScope
-                ? [...this._agents].filter(a => ws._agentScope!.has(a.id)).map(a => a.id)
-                : [...this._agents].map(a => a.id);
-
-            ws.send(JSON.stringify({
-                event: "server.connected",
-                agents: visibleAgents,
-                port: this._port,
-            }));
-
-            // Bidirectional: handle commands from UI
-            ws.on("message", (raw: Buffer | string) => {
-                try {
-                    const msg = JSON.parse(raw.toString());
-                    this._handleCommand(msg, ws);
-                } catch {
-                    ws.send(JSON.stringify({ event: "error", message: "Invalid JSON" }));
-                }
-            });
-        });
-
-        // Start REST API if apiPort is set
-        this._startApi();
-    }
-
-    /** Stop the WebSocket and HTTP servers. */
-    stop(): void {
-        if (this._wss) { this._wss.close(); this._wss = null; }
-        if (this._http) { this._http.close(); this._http = null; }
-    }
-
-    /** REST API port (for external logging). */
-    get apiPort(): number | null {
-        return this._apiPort;
-    }
-
-    /** WS port. */
-    get wsPort(): number {
-        return this._port;
-    }
-
-    // ── REST API ─────────────────────────────────────────────────────────
-
-    private _startApi(): void {
-        if (!this._apiPort) return;
-
+        // Single HTTP server for REST + WS upgrade
         this._http = createServer((req, res) => {
             // CORS
             const origin = req.headers.origin ?? "*";
@@ -210,7 +122,7 @@ export class EventServer {
 
             if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
 
-            // Auth check
+            // Auth check for REST
             if (this._requireAuth) {
                 const auth = req.headers["authorization"];
                 if (!auth?.startsWith("Bearer ") || !this._tokens.has(auth.slice(7))) {
@@ -235,15 +147,77 @@ export class EventServer {
             }
         });
 
+        // WebSocket server — noServer mode, shares the HTTP server
+        this._wss = new WebSocketServer({
+            noServer: true,
+            verifyClient: (info: { origin: string; req: IncomingMessage }, cb: (ok: boolean, code?: number, msg?: string) => void) => {
+                if (this._allowedOrigins && !this._allowedOrigins.includes(info.origin)) {
+                    cb(false, 403, "Origin not allowed"); return;
+                }
+                if (this._requireAuth) {
+                    const auth = info.req.headers["authorization"];
+                    if (!auth || !auth.startsWith("Bearer ")) { cb(false, 401, "Missing Authorization header"); return; }
+                    if (!this._tokens.has(auth.slice(7))) { cb(false, 401, "Invalid token"); return; }
+                }
+                cb(true);
+            },
+        });
+
+        // Handle WS upgrade
+        this._http.on("upgrade", (req, socket, head) => {
+            this._wss!.handleUpgrade(req, socket, head, (ws) => {
+                this._wss!.emit("connection", ws, req);
+            });
+        });
+
+        this._wss.on("connection", (ws: AuthedSocket, req: IncomingMessage) => {
+            const auth = req.headers["authorization"];
+            if (auth?.startsWith("Bearer ")) {
+                ws._agentScope = this._tokens.get(auth.slice(7)) ?? null;
+            } else {
+                ws._agentScope = null;
+            }
+
+            const visibleAgents = ws._agentScope
+                ? [...this._agents].filter(a => ws._agentScope!.has(a.id)).map(a => a.id)
+                : [...this._agents].map(a => a.id);
+
+            ws.send(JSON.stringify({
+                event: "server.connected",
+                agents: visibleAgents,
+                port: this._port,
+            }));
+
+            ws.on("message", (raw: Buffer | string) => {
+                try {
+                    const msg = JSON.parse(raw.toString());
+                    this._handleCommand(msg, ws);
+                } catch {
+                    ws.send(JSON.stringify({ event: "error", message: "Invalid JSON" }));
+                }
+            });
+        });
+
         this._http.on("error", (err: NodeJS.ErrnoException) => {
             if (err.code === "EADDRINUSE") {
-                console.error(`⚠ REST API port ${this._apiPort} already in use — API not started`);
+                console.error(`⚠ Port ${this._port} already in use`);
             } else {
-                console.error(`⚠ REST API error: ${err.message}`);
+                console.error(`⚠ Server error: ${err.message}`);
             }
         });
 
-        this._http.listen(this._apiPort, this._host);
+        this._http.listen(this._port, this._host);
+    }
+
+    /** Stop the server. */
+    stop(): void {
+        if (this._wss) { this._wss.close(); this._wss = null; }
+        if (this._http) { this._http.close(); this._http = null; }
+    }
+
+    /** Server port (REST + WS). */
+    get port(): number {
+        return this._port;
     }
 
     private _handleApi(req: IncomingMessage, res: ServerResponse, body: any): void {

@@ -585,8 +585,7 @@ Expose all agent events over WebSocket and manage agents via REST API. **Opt-in*
 import { EventServer } from "@pinecall/sdk/server";
 
 const server = new EventServer({
-  port: 4100,          // WS port (default: 4100)
-  apiPort: 3000,       // REST API port (optional)
+  port: 4100,          // single port for REST + WS (default: 4100)
   host: "127.0.0.1",   // bind address
   requireAuth: true,   // require token in headers
   pinecall: pc,        // Pinecall client (enables POST /agents, GET /phones)
@@ -624,7 +623,7 @@ All events are JSON with `event`, `agent_id`, and (when applicable) `call_id`:
 
 | Method | Description |
 |--------|-------------|
-| `new EventServer({ port?, apiPort?, host?, requireAuth?, allowedOrigins?, pinecall? })` | Create server |
+| `new EventServer({ port?, host?, requireAuth?, allowedOrigins?, pinecall? })` | Create server |
 | `server.attach(agent)` → `string` | Subscribe + get agent token (`evt_...`) |
 | `server.detach(agent)` | Unsubscribe + revoke token |
 | `server.createToken(...agents)` → `string` | Multi-agent token (dashboard) |
@@ -636,7 +635,7 @@ All events are JSON with `event`, `agent_id`, and (when applicable) `call_id`:
 
 #### REST API (built-in)
 
-Available via `pinecall server` or `EventServer({ apiPort })`:
+Available via `pinecall server` or `EventServer`:
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -754,7 +753,7 @@ pinecall run ./agents
 
 # Server mode — headless with REST + WS
 pinecall server Agent.js
-pinecall server ./agents --port=4100 --api-port=3000
+pinecall server ./agents --port=4100
 ```
 
 #### CLI Slash Commands
@@ -788,7 +787,6 @@ await pc.connect();
 
 const eventServer = new EventServer({
   port: 4100,
-  apiPort: 3000,
   host: "0.0.0.0",
   requireAuth: true,
   pinecall: pc,
@@ -802,7 +800,7 @@ for (const config of await db.agents.findAll()) {
 }
 
 eventServer.start();
-// REST at http://0.0.0.0:3000 — WS at ws://0.0.0.0:4100
+// Server at http://0.0.0.0:4100 — REST + WS on same port
 ```
 
 ---

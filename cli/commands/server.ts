@@ -1,11 +1,11 @@
 /**
  * `pinecall server <name|folder>` — headless server mode with REST API + WS events.
  *
- * Loads agent(s), starts EventServer with WS + REST API, no TUI.
+ * Loads agent(s), starts EventServer with REST + WS on a single port.
  *
  *   pinecall server Agent.js                     → single agent
  *   pinecall server ./agents                     → all agents in folder
- *   pinecall server ./agents --port=4100 --api-port=3000
+ *   pinecall server ./agents --port=4100
  */
 
 import { resolveEnv, requireOpenAI } from "../lib/env.js";
@@ -23,7 +23,6 @@ async function resolveFiles(input: string): Promise<string[]> {
     const cwd = process.cwd();
     const full = path.resolve(cwd, input);
 
-    // Check if directory
     try {
         const stat = fs.statSync(full);
         if (stat.isDirectory()) {
@@ -37,10 +36,8 @@ async function resolveFiles(input: string): Promise<string[]> {
         }
     } catch (e) {
         if (e instanceof CliError) throw e;
-        // Not a directory, try as file
     }
 
-    // Single file
     const candidates = [input];
     if (!EXTENSIONS.some(ext => input.endsWith(ext))) {
         for (const ext of EXTENSIONS) candidates.push(input + ext);
@@ -74,22 +71,20 @@ export async function server(argv: string[]): Promise<void> {
     const args = parseArgs(argv, {
         positional: "file",
         flags: [],
-        values: ["--port", "--api-port", "--host"],
+        values: ["--port", "--host"],
     });
 
     const input = args.positional;
     if (!input) {
-        throw new CliError("Usage: pinecall server <AgentName|folder> [--port=4100] [--api-port=3000]");
+        throw new CliError("Usage: pinecall server <AgentName|folder> [--port=4100]");
     }
 
     const env = resolveEnv();
     requireOpenAI(env);
 
-    const wsPort = parseInt(args.values.get("--port") ?? "4100", 10);
-    const apiPort = parseInt(args.values.get("--api-port") ?? "3000", 10);
+    const port = parseInt(args.values.get("--port") ?? "4100", 10);
     const host = args.values.get("--host") ?? "0.0.0.0";
 
-    // Load agent files
     const files = await resolveFiles(input);
 
     // ── Banner ──
@@ -97,15 +92,10 @@ export async function server(argv: string[]): Promise<void> {
     console.log(`  ${chalk.hex("#7C3AED")("⚡")} ${chalk.bold("pinecall server")}`);
     console.log("");
 
-    // Start EventServer with REST API
+    // Start EventServer (REST + WS on single port)
     const { EventServer } = await import("@pinecall/sdk/server");
-    const eventServer = new EventServer({
-        port: wsPort,
-        apiPort,
-        host,
-    });
+    const eventServer = new EventServer({ port, host });
 
-    // Load and start all agents
     for (const file of files) {
         const { AgentClass, name } = await loadAgentClass(file);
 
@@ -118,7 +108,6 @@ export async function server(argv: string[]): Promise<void> {
         await agent.start();
         const token = eventServer.attach(agent.core);
 
-        // Agent info
         const phone = agent.phone?.number ?? "—";
         const model = agent.model ?? "—";
         console.log(`  ${chalk.green("✓")} ${chalk.hex("#7C3AED")(name.padEnd(20))} ${chalk.dim("model=")}${model} ${chalk.dim("phone=")}${phone}`);
@@ -129,11 +118,10 @@ export async function server(argv: string[]): Promise<void> {
 
     console.log("");
     console.log(`  ${chalk.dim("─".repeat(50))}`);
-    console.log(`  ${chalk.bold("REST API")}   http://${host}:${apiPort}`);
-    console.log(`  ${chalk.bold("WS Events")}  ws://${host}:${wsPort}`);
+    console.log(`  ${chalk.bold("Server")}  http://${host}:${port}  ${chalk.dim("(REST + WS)")}`);
     console.log(`  ${chalk.dim("─".repeat(50))}`);
     console.log("");
-    console.log(`  ${chalk.dim("Endpoints:")}`);
+    console.log(`  ${chalk.dim("REST endpoints:")}`);
     console.log(`    GET    /agents              ${chalk.dim("List agents")}`);
     console.log(`    POST   /agents              ${chalk.dim("Deploy agent")}`);
     console.log(`    PATCH  /agents/:name        ${chalk.dim("Configure agent")}`);
@@ -142,10 +130,13 @@ export async function server(argv: string[]): Promise<void> {
     console.log(`    GET    /calls               ${chalk.dim("List active calls")}`);
     console.log(`    PATCH  /calls/:id           ${chalk.dim("Configure call")}`);
     console.log(`    POST   /calls/:id/hangup    ${chalk.dim("Hang up call")}`);
+    console.log(`    GET    /phones              ${chalk.dim("List phone numbers")}`);
+    console.log(`    GET    /voices              ${chalk.dim("List TTS voices")}`);
+    console.log("");
+    console.log(`  ${chalk.dim("WebSocket")}  ws://${host}:${port}  ${chalk.dim("(events + commands)")}`);
     console.log("");
     console.log(`  ${chalk.dim("Ctrl+C to stop")}`);
     console.log("");
 
-    // Keep process alive
     await new Promise(() => {});
 }
