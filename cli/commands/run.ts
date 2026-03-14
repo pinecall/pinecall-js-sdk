@@ -49,7 +49,8 @@ async function resolveAgentFile(input: string): Promise<string> {
 export async function run(argv: string[]): Promise<void> {
     const args = parseArgs(argv, {
         positional: "file",
-        values: ["--phone", "--dial"],
+        flags: ["--ws"],
+        values: ["--phone", "--dial", "--ws-port"],
     });
 
     const input = args.positional;
@@ -109,6 +110,16 @@ export async function run(argv: string[]): Promise<void> {
     // ── Attach events (unified log stream) ──
     attachEvents(agent.core);
     attachLLMEvents(agent.core);
+
+    // ── WebSocket event server (opt-in) ──
+    if (args.flags.has("--ws")) {
+        const wsPort = parseInt(args.values.get("--ws-port") ?? "4100", 10);
+        const { EventServer } = await import("@pinecall/sdk/server");
+        const eventServer = new EventServer({ port: wsPort });
+        eventServer.attach(agent.core);
+        eventServer.start();
+        logLine(`${ACCENT("WS")}    ws://127.0.0.1:${wsPort}`);
+    }
 
     // ── Input handler ──
     startInput({

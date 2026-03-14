@@ -641,6 +641,80 @@ ws.onmessage = (e) => {
 };
 ```
 
+#### CLI `--ws` Flag
+
+Start the EventServer from the CLI without changing code:
+
+```bash
+# Start agent with WS event bridge on default port 4100
+pinecall run Receptionist --ws
+
+# Custom port
+pinecall run Receptionist --ws --ws-port=8080
+```
+
+#### Vapi-Mode: Full Server Example
+
+Build your own Vapi with dynamic agents, database persistence, EventServer, and a dashboard UI:
+
+```typescript
+import express from "express";
+import { Pinecall } from "@pinecall/sdk";
+import { EventServer } from "@pinecall/sdk/server";
+import db from "./db.js"; // your database
+
+const app = express();
+app.use(express.json());
+
+// ── Pinecall SDK ──
+const pc = new Pinecall({ apiKey: process.env.PINECALL_API_KEY });
+await pc.connect();
+
+// ── EventServer: expose events to your dashboard UI ──
+const eventServer = new EventServer({ port: 4100 });
+
+// ── Load agents from database on startup ──
+const configs = await db.agents.findAll();
+for (const config of configs) {
+  const agent = pc.deploy(config.name, config);
+  eventServer.attach(agent);  // forward events to dashboard
+}
+eventServer.start();
+
+// ── REST API for your dashboard ──
+
+// Create agent
+app.post("/api/agents", async (req, res) => {
+  const config = req.body;
+  await db.agents.create(config);
+  const agent = pc.deploy(config.name, config);
+  eventServer.attach(agent);
+  res.json({ ok: true, name: config.name });
+});
+
+// Update agent live (hot-reload)
+app.patch("/api/agents/:name", async (req, res) => {
+  await db.agents.update(req.params.name, req.body);
+  pc.agents.get(req.params.name)?.configure(req.body);
+  res.json({ ok: true });
+});
+
+// Delete agent
+app.delete("/api/agents/:name", async (req, res) => {
+  const agent = pc.agents.get(req.params.name);
+  if (agent) {
+    for (const [ref] of agent._channels) agent.removeChannel(ref);
+    eventServer.detach(agent);
+  }
+  await db.agents.delete(req.params.name);
+  res.json({ ok: true });
+});
+
+app.listen(3000);
+// Dashboard connects to ws://localhost:4100 for live events
+// REST API at http://localhost:3000/api/agents
+```
+
 ---
 
 ## Configuration
