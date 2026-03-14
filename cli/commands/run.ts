@@ -1,10 +1,12 @@
 /**
- * `pinecall run <name>` — load and run an Agent / GPTAgent.
+ * `pinecall run <name|folder>` — load and run Agent(s)  / GPTAgent(s).
  *
- * Auto-discovers the file by trying extensions and common directories:
- *   pinecall run Receptionist       → ./Receptionist.js, ./Receptionist.ts, etc.
+ * Single file:
+ *   pinecall run Receptionist       → ./Receptionist.js, .ts, etc.
  *   pinecall run Receptionist.js    → exact path
- *   pinecall run agents/Receptionist → ./agents/Receptionist.js, etc.
+ *
+ * Folder (multi-agent):
+ *   pinecall run ./agents           → loads all .js/.ts agent files in folder
  */
 
 import { resolveEnv, requireOpenAI } from "../lib/env.js";
@@ -12,8 +14,8 @@ import { parseArgs } from "../lib/args.js";
 import { pickPhone } from "../lib/phone-picker.js";
 import { CliError } from "../lib/errors.js";
 import { attachEvents, attachLLMEvents } from "../ui/events.js";
-import { printHeader, logLine, ensureCursor } from "../ui/renderer.js";
-import { ACCENT, DIM } from "../ui/theme.js";
+import { printHeader, logLine, ensureCursor, writeln } from "../ui/renderer.js";
+import { ACCENT, DIM, MUTED, OK } from "../ui/theme.js";
 import { startInput } from "../ui/input.js";
 
 // ── File resolution ──────────────────────────────────────────────────────
@@ -44,24 +46,34 @@ async function resolveAgentFile(input: string): Promise<string> {
     );
 }
 
-// ── Run command ──────────────────────────────────────────────────────────
+/** Check if path is a directory, return sorted agent files inside it. */
+async function resolveAgentFolder(input: string): Promise<string[] | null> {
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cwd = process.cwd();
+    const full = path.resolve(cwd, input);
 
-export async function run(argv: string[]): Promise<void> {
-    const args = parseArgs(argv, {
-        positional: "file",
-        flags: ["--ws"],
-        values: ["--phone", "--dial", "--ws-port"],
-    });
+    let stat: any;
+    try { stat = fs.statSync(full); } catch { return null; }
+    if (!stat.isDirectory()) return null;
 
-    const input = args.positional;
-    if (!input) {
-        throw new CliError("Usage: pinecall run <AgentName>");
+    const files = fs.readdirSync(full)
+        .filter((f: string) => EXTENSIONS.some(ext => f.endsWith(ext)))
+        .filter((f: string) => !f.startsWith("_") && !f.startsWith("."))
+        .sort()
+        .map((f: string) => path.join(full, f));
+
+    if (files.length === 0) {
+        throw new CliError(`No agent files found in ${full}`);
     }
 
-    const env = resolveEnv();
-    requireOpenAI(env);
+    return files;
+}
 
-    const fullPath = await resolveAgentFile(input);
+// ── Load a single agent class from file ──────────────────────────────────
+
+async function loadAgentClass(fullPath: string): Promise<{ AgentClass: any; name: string }> {
+    const path = await import("node:path");
 
     let AgentClass: any;
     try {
@@ -73,12 +85,54 @@ export async function run(argv: string[]): Promise<void> {
 
     if (typeof AgentClass !== "function") {
         throw new CliError(
-            `Agent file must export a class (got ${typeof AgentClass}). ` +
+            `Agent file must export a class (got ${typeof AgentClass}): ${fullPath}\n` +
             `Use module.exports = MyAgent or export default MyAgent.`,
         );
     }
 
-    // Instantiate
+    const name = AgentClass.name || path.basename(fullPath, path.extname(fullPath));
+    return { AgentClass, name };
+}
+
+// ── Run command ──────────────────────────────────────────────────────────
+
+export async function run(argv: string[]): Promise<void> {
+    const args = parseArgs(argv, {
+        positional: "file",
+        flags: ["--ws"],
+        values: ["--phone", "--dial", "--ws-port"],
+    });
+
+    const input = args.positional;
+    if (!input) {
+        throw new CliError("Usage: pinecall run <AgentName|folder>");
+    }
+
+    const env = resolveEnv();
+    requireOpenAI(env);
+
+    // Detect folder vs single file
+    const folderFiles = await resolveAgentFolder(input);
+
+    if (folderFiles) {
+        await runMultiple(folderFiles, args, env);
+    } else {
+        await runSingle(input, args, env);
+    }
+
+    await new Promise(() => { });
+}
+
+// ── Single agent mode ────────────────────────────────────────────────────
+
+async function runSingle(
+    input: string,
+    args: ReturnType<typeof parseArgs>,
+    env: ReturnType<typeof resolveEnv>,
+): Promise<void> {
+    const fullPath = await resolveAgentFile(input);
+    const { AgentClass, name } = await loadAgentClass(fullPath);
+
     const agent = new AgentClass({
         apiKey: env.apiKey,
         openaiKey: env.openaiKey,
@@ -98,20 +152,17 @@ export async function run(argv: string[]): Promise<void> {
     }
 
     // ── Show header ──
-    const agentName = AgentClass.name || "Agent";
-    printHeader(agentName);
+    printHeader(name);
     if (agent.model) logLine(`${DIM("Model")}  ${agent.model}`);
     if (agent.voice) logLine(`${DIM("Voice")}  ${agent.voice}`);
     if (agent.language) logLine(`${DIM("Lang")}   ${agent.language}`);
 
-    // Start
     await agent.start();
 
-    // ── Attach events (unified log stream) ──
     attachEvents(agent.core);
     attachLLMEvents(agent.core);
 
-    // ── WebSocket event server (opt-in) ──
+    // WS event server (opt-in)
     if (args.flags.has("--ws")) {
         const wsPort = parseInt(args.values.get("--ws-port") ?? "4100", 10);
         const { EventServer } = await import("@pinecall/sdk/server");
@@ -121,14 +172,9 @@ export async function run(argv: string[]): Promise<void> {
         logLine(`${ACCENT("WS")}    ws://127.0.0.1:${wsPort}`);
     }
 
-    // ── Input handler ──
-    startInput({
-        agent: agent.core,
-        pc: agent.pinecall,
-    });
+    startInput({ agent: agent.core, pc: agent.pinecall });
     ensureCursor();
 
-    // Outbound dial
     if (dialTo) {
         const from = phoneArg ?? agent.phone?.number;
         if (!from) {
@@ -137,6 +183,63 @@ export async function run(argv: string[]): Promise<void> {
         logLine(`${ACCENT("Dialing")} ${dialTo} from ${from}...`);
         await agent.dial({ to: dialTo, from });
     }
+}
 
-    await new Promise(() => { });
+// ── Multi-agent mode (folder) ────────────────────────────────────────────
+
+async function runMultiple(
+    files: string[],
+    args: ReturnType<typeof parseArgs>,
+    env: ReturnType<typeof resolveEnv>,
+): Promise<void> {
+    const path = await import("node:path");
+
+    printHeader(`${files.length} agents`);
+
+    // Optional WS event server
+    let eventServer: any = null;
+    if (args.flags.has("--ws")) {
+        const wsPort = parseInt(args.values.get("--ws-port") ?? "4100", 10);
+        const { EventServer } = await import("@pinecall/sdk/server");
+        eventServer = new EventServer({ port: wsPort });
+        eventServer.start();
+        logLine(`${ACCENT("WS")}    ws://127.0.0.1:${wsPort}`);
+    }
+
+    // Load and start all agents
+    let firstAgent: any = null;
+
+    for (const file of files) {
+        const { AgentClass, name } = await loadAgentClass(file);
+
+        const agent = new AgentClass({
+            apiKey: env.apiKey,
+            openaiKey: env.openaiKey,
+            url: env.url,
+        });
+
+        await agent.start();
+        attachEvents(agent.core);
+        attachLLMEvents(agent.core);
+
+        if (eventServer) eventServer.attach(agent.core);
+        if (!firstAgent) firstAgent = agent;
+
+        // Log agent info
+        const phone = agent.phone?.number ?? agent.channels?.[0]?.number ?? "—";
+        logLine(
+            `${OK("✓")} ${ACCENT(name.padEnd(20))} ` +
+            `${DIM("model=")}${agent.model ?? "—"} ` +
+            `${DIM("phone=")}${phone}`
+        );
+    }
+
+    writeln(`  ${MUTED("─".repeat(Math.min(process.stdout.columns || 80, 60)))}`);
+    writeln("");
+
+    // Input — binds to the first agent for commands
+    if (firstAgent) {
+        startInput({ agent: firstAgent.core, pc: firstAgent.pinecall });
+        ensureCursor();
+    }
 }
