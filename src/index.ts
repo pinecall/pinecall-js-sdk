@@ -52,8 +52,8 @@ export type { Turn, CallEvents, ReplyOptions, ForwardOptions } from "./call.js";
 export { ReplyStream } from "./stream.js";
 export type { ReplyStreamOptions } from "./stream.js";
 
-export { ConversationHistory } from "./history.js";
-export type { ChatMessage } from "./history.js";
+
+
 
 // Config types
 export type {

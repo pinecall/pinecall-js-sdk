@@ -449,30 +449,7 @@ agent.on("eager.turn", async (turn, call) => {
 
 ### Conversation History
 
-```typescript
-import { ConversationHistory } from "@pinecall/sdk";
-
-const history = ConversationHistory.forCall(call, "You are helpful.");
-
-// Or manual
-const history = new ConversationHistory();
-history.addSystem("You are helpful.");
-history.addUser("Hello", "msg_1");
-history.addAssistant("Hi!", "msg_2");
-
-const messages = history.toMessages();
-// [{ role: "system", content: "..." }, ...]
-```
-
-When auto-wired via `forCall()`, interruptions are handled automatically:
-
-| Event | Action |
-|-------|--------|
-| `user.message` | Add user message |
-| `bot.finished` | Add assistant message |
-| `bot.interrupted` reason=`"user_spoke"` | Add with `[interrupted]` marker |
-| `bot.interrupted` reason=`"continuation"` | Discard entirely |
-| `turn.continued` | Remove last user entry |
+When using `GPTAgent` (or `Agent` with `model`), conversation history is managed **automatically on the server**. The server tracks all messages, interruptions, and continuations to maintain correct LLM context — no client-side setup needed.
 
 ### Multi-Agent
 

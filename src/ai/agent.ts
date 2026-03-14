@@ -33,7 +33,7 @@ import {
     type VoiceShortcut,
 } from "../agent.js";
 import { Call, type Turn } from "../call.js";
-import { ConversationHistory } from "../history.js";
+
 import { Channel, Phone, WebRTC } from "./channel.js";
 
 // ─── Types ───────────────────────────────────────────────────────────────
@@ -66,7 +66,7 @@ export class Agent {
     temperature?: number;
     /** Max response tokens (server-side). */
     maxTokens?: number;
-    /** System prompt — seeded into ConversationHistory. */
+    /** System prompt sent to the server-side LLM. */
     instructions = "You are a helpful voice assistant. Be concise.";
     /** Fallback greeting (channel greeting takes priority). */
     greeting?: string;
@@ -86,8 +86,7 @@ export class Agent {
     protected _pc: Pinecall;
     /** @internal */
     protected _core: CoreAgent;
-    /** @internal */
-    protected _histories = new Map<string, ConversationHistory>();
+
     /** @internal — AbortController for the active LLM invocation per call. */
     private _turnAbort = new Map<string, AbortController>();
     /** @internal — turn_id currently being processed per call (dedup guard). */
@@ -213,10 +212,7 @@ export class Agent {
         return this._pc;
     }
 
-    /** Get conversation history for a call. */
-    getHistory(callId: string): ConversationHistory | undefined {
-        return this._histories.get(callId);
-    }
+
 
     /**
      * Log a message to the TUI LLM pane (or console if no TUI).
@@ -236,14 +232,14 @@ export class Agent {
     // ── Lifecycle hooks (override in subclass) ───────────────────────────
 
     /**
-     * Called on each turn. Override to handle user speech.
+     * Called on each turn. Override to handle user speech with your own LLM.
      * @param signal — AbortSignal that fires when a newer turn supersedes this one.
      *                 Pass it to LLM/HTTP calls so they cancel immediately.
      *
-     * When model is "pinecall:*", the server handles LLM automatically and this
-     * method is not called. Override for BYO-LLM (Anthropic, etc.).
+     * When `model` is set, the server handles LLM automatically and this
+     * method is not called. Override only for BYO-LLM.
      */
-    async onTurn(turn: Turn, call: Call, history: ConversationHistory, signal: AbortSignal): Promise<void> {
+    async onTurn(turn: Turn, call: Call, signal: AbortSignal): Promise<void> {
         // No-op by default. Override in subclass for BYO-LLM.
     }
 
@@ -300,13 +296,9 @@ export class Agent {
     /** @internal */
     private _wireEvents(): void {
         this._core.on("call.started", (call) => {
-            const history = ConversationHistory.forCall(call, this.instructions);
-            this._histories.set(call.id, history);
-
             const greeting = this._greetingForCall(call) ?? this.greeting;
             if (greeting) {
                 call.say(greeting);
-                history.addAssistant(greeting);
             }
 
             this.onCallStarted(call);
@@ -315,7 +307,6 @@ export class Agent {
         this._core.on("call.ended", (call, reason) => {
             this._abortLLM(call.id, call);
             this.onCallEnded(call, reason);
-            this._histories.delete(call.id);
         });
 
         // Speech
@@ -381,10 +372,7 @@ export class Agent {
         const turnEvent = this.turnEvent;
         this._core.on(turnEvent, (turn: Turn, call: Call) => {
             // Server-side LLM: skip client-side onTurn
-            if (this._serverSideLLM) return;
-
-            const history = this._histories.get(call.id);
-            if (!history) return;
+            if (this._serverSideLLM || this.model) return;
 
             // ── Dedup: skip if LLM is already running for this exact turn ──
             if (this._activeTurnId.get(call.id) === turn.id) {
@@ -402,7 +390,7 @@ export class Agent {
             this._activeTurnId.set(call.id, turn.id);
 
             // Fire-and-forget — do NOT await
-            this.onTurn(turn, call, history, ac.signal)
+            this.onTurn(turn, call, ac.signal)
                 .catch((err) => {
                     // Aborted turns are expected — don't log or reply
                     if (ac.signal.aborted) return;
