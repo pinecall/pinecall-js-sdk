@@ -358,6 +358,34 @@ export class EventServer {
             return;
         }
 
+        // GET /phones
+        if (method === "GET" && url === "/phones") {
+            if (!this._pc) {
+                this._json(res, 500, { error: "No Pinecall client configured" });
+                return;
+            }
+            this._pc.fetchPhones().then((phones: any[]) => {
+                this._json(res, 200, { phones });
+            }).catch((err: Error) => {
+                this._json(res, 500, { error: err.message });
+            });
+            return;
+        }
+
+        // GET /voices?provider=elevenlabs
+        if (method === "GET" && (url === "/voices" || url.startsWith("/voices?"))) {
+            const urlObj = new URL(url, `http://${this._host}`);
+            const provider = urlObj.searchParams.get("provider") ?? "elevenlabs";
+            import("../api.js").then(({ fetchVoices }) => {
+                fetchVoices({ provider }).then((voices: any[]) => {
+                    this._json(res, 200, { voices });
+                }).catch((err: Error) => {
+                    this._json(res, 500, { error: err.message });
+                });
+            });
+            return;
+        }
+
         this._json(res, 404, { error: "Not found" });
     }
 

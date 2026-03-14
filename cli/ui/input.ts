@@ -22,7 +22,8 @@ import { MUTED, DIM } from "./theme.js";
 // ── Available commands for tab completion ────────────────────────────────
 
 const COMMAND_LIST = [
-    "/help", "/calls", "/switch", "/config", "/dial",
+    "/help", "/phones", "/voices",
+    "/calls", "/switch", "/config", "/dial",
     "/hangup", "/hold", "/unhold",
     "/mute", "/unmute", "/history",
 ];
@@ -98,6 +99,7 @@ export function startInput(opts: InputOptions): void {
         if (trimmed.startsWith("/")) {
             handleCommand(trimmed, {
                 agent,
+                pc,
                 agents: opts.agents,
                 instructions: "",
                 log: logLine,

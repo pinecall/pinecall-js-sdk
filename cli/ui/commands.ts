@@ -5,15 +5,18 @@
  * Supports an optional `log` callback and `selectedCall` for TUI integration.
  */
 
-import type { Agent, Call } from "@pinecall/sdk";
+import type { Agent, Call, Pinecall } from "@pinecall/sdk";
+import { fetchVoices } from "@pinecall/sdk";
 import { MUTED, OK, WARN, ERR, DIM, ACCENT } from "./theme.js";
-import { logLine } from "./renderer.js";
+import { logLine, writeln } from "./renderer.js";
 import { getActiveCalls, getSelectedCall, selectCall, getCallLabel } from "./events.js";
 
 // ── Types ────────────────────────────────────────────────────────────────
 
 export interface CommandContext {
     agent: Agent;
+    /** Pinecall client (for /phones, /voices). */
+    pc?: Pinecall;
     /** All loaded agents (for multi-agent /dial). Key = agent name/id. */
     agents?: Map<string, Agent>;
     instructions: string;
@@ -43,10 +46,28 @@ function resolveCall(ctx: CommandContext): Call | null {
 
 function handleHelp(ctx: CommandContext): void {
     const log = ctx.log ?? logLine;
-    log(`${DIM("Commands:")}`);
-    for (const [name, def] of Object.entries(commands)) {
-        const usage = def.usage ? ` ${DIM(def.usage)}` : "";
-        log(`  ${MUTED(name.padEnd(12))}${usage} ${DIM(def.description)}`);
+    const calls = getActiveCalls();
+    const hasCalls = calls.size > 0;
+
+    log(`${DIM("── General ──")}`);
+    log(`  ${MUTED("/phones")}     ${DIM("List phone numbers")}`);
+    log(`  ${MUTED("/voices")}     ${DIM("List TTS voices")}`);
+    log(`  ${MUTED("/dial")}       ${DIM("Outbound call")} ${DIM("[agent] +number [\"greeting\"]")}`);
+
+    if (hasCalls) {
+        log(`${DIM("── Active call" + (calls.size > 1 ? "s" : "") + " ──")}`);
+        log(`  ${MUTED("/calls")}      ${DIM("List active calls")}`);
+        if (calls.size > 1) log(`  ${MUTED("/switch")}     ${DIM("Select active call")} ${DIM("<1|sid>")}`);
+        log(`  ${MUTED("/config")}     ${DIM("Change call config")} ${DIM("<voice|stt|turn|lang> <val>")}`);
+        log(`  ${MUTED("/hangup")}     ${DIM("Hang up call")}`);
+        log(`  ${MUTED("/hold")}       ${DIM("Put on hold")}`);
+        log(`  ${MUTED("/unhold")}     ${DIM("Resume held call")}`);
+        log(`  ${MUTED("/mute")}       ${DIM("Mute microphone")}`);
+        log(`  ${MUTED("/unmute")}     ${DIM("Unmute microphone")}`);
+        log(`  ${MUTED("/history")}    ${DIM("Show raw LLM history")}`);
+    } else {
+        log(`${DIM("── No active calls ──")}`);
+        log(`  ${DIM("Use /dial to make a call, or wait for an inbound call.")}`);
     }
 }
 
@@ -268,10 +289,78 @@ function handleDial(ctx: CommandContext, args: string[]): void {
     targetAgent.dial({ to: number, from, greeting });
 }
 
+// ── /phones command ─────────────────────────────────────────────────────
+
+async function handlePhones(ctx: CommandContext): Promise<void> {
+    const log = ctx.log ?? logLine;
+
+    if (!ctx.pc) {
+        log(`${ERR("No Pinecall client available")}`);
+        return;
+    }
+
+    log(`${DIM("Fetching phones...")}`);
+
+    try {
+        const phones = await ctx.pc.fetchPhones();
+
+        if (phones.length === 0) {
+            log(`${DIM("No phone numbers found")}`);
+            log(`  ${DIM("Add one at")} ${ACCENT("https://app.pinecall.io/phones")}`);
+            return;
+        }
+
+        log(`${MUTED("Number".padEnd(20))} ${MUTED("Name".padEnd(24))} ${MUTED("SID")}`);
+        log(`${MUTED("─".repeat(64))}`);
+        for (const p of phones) {
+            log(`${ACCENT((p.number ?? "").padEnd(20))} ${((p.name ?? "").padEnd(24))} ${DIM(p.sid ?? "")}`);
+        }
+        log(`${OK(`${phones.length} phone${phones.length === 1 ? "" : "s"}`)}`);
+    } catch (err) {
+        log(`${ERR("Failed to fetch phones:")} ${err}`);
+    }
+}
+
+// ── /voices command ─────────────────────────────────────────────────────
+
+async function handleVoices(ctx: CommandContext, args: string[]): Promise<void> {
+    const log = ctx.log ?? logLine;
+    const provider = args[0] ?? "elevenlabs";
+
+    log(`${DIM(`Fetching ${provider} voices...`)}`);
+
+    try {
+        const voiceList = await fetchVoices({ provider });
+
+        if (voiceList.length === 0) {
+            log(`${DIM("No voices found")}`);
+            return;
+        }
+
+        log(`${MUTED("ID".padEnd(32))} ${MUTED("Name".padEnd(24))} ${MUTED("Gender".padEnd(8))} ${MUTED("Languages")}`);
+        log(`${MUTED("─".repeat(80))}`);
+        for (const v of voiceList) {
+            const langs = v.languages?.map((l: any) => l.code).join(", ") ?? "";
+            const gender = v.gender ?? "";
+            log(
+                `${ACCENT(v.id.padEnd(32))} ` +
+                `${v.name.padEnd(24)} ` +
+                `${DIM(gender.padEnd(8))} ` +
+                `${DIM(langs)}`
+            );
+        }
+        log(`${OK(`${voiceList.length} voices`)} ${DIM(`(${provider})`)}`);
+    } catch (err) {
+        log(`${ERR("Failed to fetch voices:")} ${err}`);
+    }
+}
+
 // ── Command registry ─────────────────────────────────────────────────────
 
 const commands: Record<string, CommandDef> = {
     "/help":    { description: "Show available commands", handler: handleHelp },
+    "/phones":  { description: "List phone numbers", handler: handlePhones },
+    "/voices":  { description: "List TTS voices", usage: "[provider]", handler: handleVoices },
     "/calls":   { description: "List active calls", handler: handleCalls },
     "/switch":  { description: "Select active call", usage: "<1|sid>", handler: handleSwitch },
     "/config":  { description: "Change call config", usage: "<voice|stt|turn|lang> <val>", handler: handleConfig },

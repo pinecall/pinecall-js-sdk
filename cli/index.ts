@@ -14,19 +14,16 @@ const HELP = `
   ${chalk.bold("Usage:")} pinecall <command> [options]
 
   ${chalk.bold("Commands:")}
-    agent               Start an inbound voice agent
-    dial <number>       Make an outbound call
     run <agent>         Run an agent file (dev mode with TUI)
     server <agent|dir>  Start headless server (REST + WS)
+    agent               Start an inbound voice agent
+    dial <number>       Make an outbound call
     test                Run a connectivity smoke test
-    voices              List available TTS voices
-    phones              List phone numbers on your account
     help                Show this help message
 
   ${chalk.bold("Options:")}
     --es                Use Spanish preset (shortcut for --lang=es)
     --lang=<code>       Language preset (en, es)
-    --provider=<name>   TTS provider for voices command (default: elevenlabs)
     --from=<number>     Caller ID for dial command
 
   ${chalk.bold("Environment:")}
@@ -35,13 +32,14 @@ const HELP = `
     PINECALL_URL        ${chalk.dim("(optional)")} Custom WebSocket URL
 
   ${chalk.bold("Examples:")}
-    ${chalk.dim("$")} pinecall agent
-    ${chalk.dim("$")} pinecall dial +12025551234
     ${chalk.dim("$")} pinecall run Agent.js
     ${chalk.dim("$")} pinecall run ./agents
     ${chalk.dim("$")} pinecall server Agent.js --api-port=3000
     ${chalk.dim("$")} pinecall server ./agents
+    ${chalk.dim("$")} pinecall dial +12025551234
     ${chalk.dim("$")} pinecall test
+
+  ${chalk.bold("In-CLI commands:")} /phones /voices /dial /config /help
 `;
 
 async function main(): Promise<void> {
@@ -58,11 +56,10 @@ async function main(): Promise<void> {
         case "test":
             return (await import("./commands/test.js")).default(argv);
 
-        case "voices":
-            return (await import("./commands/voices.js")).default(argv);
-
         case "phones":
-            return (await import("./commands/phones.js")).default(argv);
+        case "voices":
+            console.error(`  ${chalk.dim("ℹ")} ${chalk.dim(`"${command}" moved to interactive CLI. Use /${command} inside pinecall run.`)}`);
+            return;
 
         case "run":
             return (await import("./commands/run.js")).run(argv);
