@@ -256,11 +256,67 @@ export class Call extends TypedEmitter<CallEvents> {
         this._send({ event: "call.unmute", call_id: this.id });
     }
 
+    // ── History management (server-side LLM) ─────────────────────────────
+
+    /** @internal Pending response resolvers for request/response events. */
+    private _pendingResponses = new Map<string, (data: any) => void>();
+
+    /** @internal Send a request and wait for a specific response event. */
+    private _request(sendEvent: string, responseEvent: string, data: Record<string, unknown> = {}): Promise<any> {
+        return new Promise((resolve) => {
+            this._pendingResponses.set(responseEvent, resolve);
+            this._send({ event: sendEvent, call_id: this.id, ...data });
+        });
+    }
+
+    /**
+     * Fetch conversation history from the server.
+     * Returns array of OpenAI-format messages.
+     */
+    async getHistory(): Promise<Array<{ role: string; content: string }>> {
+        const res = await this._request("history.get", "history.data");
+        return res.messages ?? [];
+    }
+
+    /**
+     * Inject messages into the history (e.g. CRM context).
+     * Returns updated message count.
+     */
+    async addHistory(messages: Array<{ role: string; content: string }>): Promise<number> {
+        const res = await this._request("history.add", "history.updated", { messages });
+        return res.count ?? 0;
+    }
+
+    /**
+     * Clear history (system prompt is preserved).
+     * Returns updated message count.
+     */
+    async clearHistory(): Promise<number> {
+        const res = await this._request("history.clear", "history.updated");
+        return res.count ?? 0;
+    }
+
+    /**
+     * Update the system prompt mid-call.
+     * Takes effect on the next LLM request.
+     */
+    async setInstructions(instructions: string): Promise<number> {
+        const res = await this._request("history.set_instructions", "history.updated", { instructions });
+        return res.count ?? 0;
+    }
+
     // ── Internal: called by Pinecall client to route events ──────────────
 
     /** @internal Process a server event routed to this call. */
     _handleEvent(event: Record<string, unknown>): void {
         const type = event.event as string;
+
+        // Resolve any pending request/response promises (e.g., history.data, history.updated)
+        const resolver = this._pendingResponses.get(type);
+        if (resolver) {
+            this._pendingResponses.delete(type);
+            resolver(event);
+        }
 
         switch (type) {
             case "user.message": {
@@ -368,6 +424,9 @@ export class Call extends TypedEmitter<CallEvents> {
                 break;
             case "call.unmuted":
                 this.emit("call.unmuted", (event.muted_transcript as string) ?? null);
+                break;
+            case "llm.tool_call":
+                this.emit("llm.tool_call", event);
                 break;
         }
     }

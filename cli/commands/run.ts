@@ -111,7 +111,11 @@ export async function run(argv: string[]): Promise<void> {
     attachLLMEvents(agent.core);
 
     // ── Input handler ──
-    startInput({ agent: agent.core, pc: agent.pinecall });
+    startInput({
+        agent: agent.core,
+        pc: agent.pinecall,
+        getHistory: (callId: string) => agent.getHistory(callId)?.toMessages(),
+    });
     ensureCursor();
 
     // Outbound dial

@@ -64,4 +64,28 @@ describe("buildShortcutPayload", () => {
         const result = buildShortcutPayload({ stt: sttObj as any });
         expect(result.stt).toEqual(sttObj);
     });
+
+    it("includes llm field", () => {
+        const result = buildShortcutPayload({ llm: "pinecall:gpt-4.1-nano" } as any);
+        expect(result.llm).toBe("pinecall:gpt-4.1-nano");
+    });
+
+    it("includes instructions field", () => {
+        const result = buildShortcutPayload({ instructions: "Be concise." } as any);
+        expect(result.instructions).toBe("Be concise.");
+    });
+
+    it("includes tools field", () => {
+        const tools = [
+            { type: "function", function: { name: "getMenu", description: "Get menu", parameters: { type: "object", properties: {} } } },
+        ];
+        const result = buildShortcutPayload({ tools } as any);
+        expect(result.tools).toEqual(tools);
+        expect(result.tools).toHaveLength(1);
+    });
+
+    it("omits tools when not provided", () => {
+        const result = buildShortcutPayload({ voice: "elevenlabs:abc" });
+        expect(result).not.toHaveProperty("tools");
+    });
 });

@@ -23,7 +23,7 @@ import { MUTED, DIM } from "./theme.js";
 
 const COMMAND_LIST = [
     "/help", "/hangup", "/hold", "/unhold",
-    "/mute", "/unmute", "/calls",
+    "/mute", "/unmute", "/calls", "/history",
 ];
 
 // ── Prompt appearance ────────────────────────────────────────────────────
@@ -57,6 +57,8 @@ export function redrawPrompt(): void {
 export interface InputOptions {
     agent: Agent;
     pc: Pinecall;
+    /** Optional: returns raw LLM history for a call. */
+    getHistory?: (callId: string) => unknown[] | undefined;
 }
 
 export function startInput(opts: InputOptions): void {
@@ -95,6 +97,7 @@ export function startInput(opts: InputOptions): void {
                 agent,
                 instructions: "",
                 log: logLine,
+                getHistory: opts.getHistory,
             });
         }
 

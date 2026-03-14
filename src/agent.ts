@@ -67,6 +67,8 @@ export interface AgentConfig {
     stt?: STTShortcut;
     turnDetection?: TurnDetectionShortcut;
     interruption?: InterruptionShortcut;
+    /** Server-side LLM: "openai:gpt-4.1-nano" or full config object. */
+    llm?: string | Record<string, unknown>;
     config?: SessionConfig;
 }
 
@@ -76,6 +78,8 @@ export interface ChannelConfig {
     stt?: STTShortcut;
     turnDetection?: TurnDetectionShortcut;
     interruption?: InterruptionShortcut;
+    /** Server-side LLM: "openai:gpt-4.1-nano" or full config object. */
+    llm?: string | Record<string, unknown>;
     config?: Partial<SessionConfig>;
 }
 
@@ -364,7 +368,14 @@ export class Agent extends TypedEmitter<AgentEvents> {
                 const callId = data.call_id as string;
                 if (callId) {
                     const call = this._calls.get(callId);
-                    if (call) call._handleEvent(data);
+                    if (call) {
+                        call._handleEvent(data);
+                        // Emit llm.* events on agent too — they aren't proxied
+                        // from Call (unlike user.message, bot.speaking, etc.)
+                        if (eventType.startsWith("llm.")) {
+                            this.emit(eventType as any, data, call);
+                        }
+                    }
                 }
                 break;
             }

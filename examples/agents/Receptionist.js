@@ -30,8 +30,6 @@ const db = {
     },
 };
 
-// ── Agent ────────────────────────────────────────────────────────────────
-
 class Receptionist extends GPTAgent {
     model = "gpt-4.1-nano";
 
@@ -63,6 +61,7 @@ Rules:
 
     async checkAvailability({ date, time }, call) {
         this.log(call, `🔍 Checking availability: ${date} ${time}`);
+        await new Promise(r => setTimeout(r, 3000)); // simulate slow API
         const seats = db.tablesAvailable(date, time);
         const available = seats > 0;
         this.log(call, `   ${available ? "✓" : "✗"} ${seats} seats available`);
@@ -70,6 +69,7 @@ Rules:
     }
 
     async bookReservation({ date, time, guests, name }, call) {
+        await new Promise(r => setTimeout(r, 3000)); // simulate slow API
         const seats = db.tablesAvailable(date, time);
         if (seats < guests) {
             this.log(call, `❌ Not enough seats: ${seats} < ${guests}`);
@@ -96,8 +96,6 @@ Rules:
         return { hours: db.hours, address: db.address };
     }
 }
-
-// ── Tool definitions ─────────────────────────────────────────────────────
 
 Receptionist.defineTool("checkAvailability", "Check table availability for a date and time", {
     date: { type: "string", description: "Date (YYYY-MM-DD)" },

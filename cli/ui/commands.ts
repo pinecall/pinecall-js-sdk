@@ -16,6 +16,8 @@ export interface CommandContext {
     instructions: string;
     log?: (msg: string) => void;
     selectedCall?: Call;
+    /** Returns raw LLM history for a call (JSON-serializable messages array). */
+    getHistory?: (callId: string) => unknown[] | undefined;
 }
 
 interface CommandDef {
@@ -111,6 +113,7 @@ const commands: Record<string, CommandDef> = {
     "/mute": { description: "Mute the microphone", handler: handleMute },
     "/unmute": { description: "Unmute the microphone", handler: handleUnmute },
     "/calls": { description: "List active calls", handler: handleCalls },
+    "/history": { description: "Show raw LLM history (JSON)", handler: handleHistory },
 };
 
 /**
@@ -130,4 +133,57 @@ export function handleCommand(input: string, ctx: CommandContext): boolean {
     }
     def.handler(ctx);
     return true;
+}
+
+// ── /history command ─────────────────────────────────────────────────────
+
+import chalk from "chalk";
+
+/** Syntax-highlight a JSON string with chalk colors. */
+function highlightJson(json: string): string {
+    return json
+        // Keys
+        .replace(/"(\w+)"\s*:/g, (_, key) => `${chalk.hex("#9d4edd")(`"${key}"`)}:`)
+        // String values (after colon)
+        .replace(/:\s*"([^"]*)"/g, (_, val) => `: ${chalk.hex("#22C55E")(`"${val}"`)}`)  
+        // Numbers
+        .replace(/:\s*(\d+\.?\d*)/g, (_, num) => `: ${chalk.hex("#F59E0B")(num)}`)
+        // Booleans / null
+        .replace(/:\s*(true|false|null)/g, (_, val) => `: ${chalk.hex("#06B6D4")(val)}`);
+}
+
+function handleHistory(ctx: CommandContext): void {
+    const log = ctx.log ?? logLine;
+
+    // Find a call to get history for
+    const call = ctx.selectedCall ?? [...ctx.agent.calls.values()][0];
+    if (!call && !ctx.getHistory) {
+        log(`${DIM("No active calls and no history available")}`);
+        return;
+    }
+
+    const callId = call?.id;
+    let messages: unknown[] | undefined;
+
+    if (ctx.getHistory && callId) {
+        messages = ctx.getHistory(callId);
+    }
+
+    if (!messages || messages.length === 0) {
+        log(`${DIM("No history for ${callId ? callId.slice(0, 12) : 'any call'}")}`);
+        return;
+    }
+
+    log(`${MUTED(`─── History (${messages.length} messages) ───`)}`);
+
+    for (const msg of messages) {
+        const raw = JSON.stringify(msg, null, 2);
+        const highlighted = highlightJson(raw);
+        for (const line of highlighted.split("\n")) {
+            log(`  ${line}`);
+        }
+        log(""); // spacing between messages
+    }
+
+    log(`${MUTED(`─── End (${messages.length} messages) ───`)}`);
 }

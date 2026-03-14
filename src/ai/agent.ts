@@ -60,6 +60,12 @@ export class Agent {
     turnDetection?: AgentConfig["turnDetection"];
     /** Interruption config. */
     interruption?: AgentConfig["interruption"];
+    /** LLM model. Use "pinecall:gpt-4.1-nano" for server-side LLM. */
+    model?: string;
+    /** LLM temperature (server-side). */
+    temperature?: number;
+    /** Max response tokens (server-side). */
+    maxTokens?: number;
     /** System prompt — seeded into ConversationHistory. */
     instructions = "You are a helpful voice assistant. Be concise.";
     /** Fallback greeting (channel greeting takes priority). */
@@ -88,6 +94,8 @@ export class Agent {
     private _activeTurnId = new Map<string, number>();
     /** @internal */
     protected _started = false;
+    /** @internal — When true, model is auto-prefixed with "pinecall:" for server-side LLM. */
+    protected _serverSideLLM = false;
 
     // ── Constructor ──────────────────────────────────────────────────────
 
@@ -111,7 +119,38 @@ export class Agent {
         if (this.stt) cfg.stt = this.stt;
         if (this.turnDetection) cfg.turnDetection = this.turnDetection;
         if (this.interruption !== undefined) cfg.interruption = this.interruption;
+
+        // Server-side LLM: if model is set, send it + instructions + tools to server.
+        // Both GPTAgent (always) and Agent (when model is set) use server-side LLM.
+        const useServerLLM = this._serverSideLLM || !!this.model;
+        if (useServerLLM && this.model) {
+            cfg.llm = this.model;
+            if (this.instructions) (cfg as any).instructions = this.instructions;
+            const tools = this._getToolDefinitions();
+            if (tools.length > 0) (cfg as any).tools = tools;
+        }
+
         return cfg;
+    }
+
+    /** @internal Collect tool definitions from static _tools registry. */
+    private _getToolDefinitions(): Array<{ type: string; function: { name: string; description: string; parameters: Record<string, unknown> } }> {
+        const Ctor = this.constructor as any;
+        const toolDefs: Map<string, { description: string; parameters: Record<string, unknown>; handler: string }> | undefined = Ctor._tools;
+        if (!toolDefs || toolDefs.size === 0) return [];
+
+        const tools: Array<{ type: string; function: { name: string; description: string; parameters: Record<string, unknown> } }> = [];
+        for (const [name, def] of toolDefs) {
+            tools.push({
+                type: "function",
+                function: {
+                    name,
+                    description: def.description,
+                    parameters: def.parameters,
+                },
+            });
+        }
+        return tools;
     }
 
     // ── Public API ───────────────────────────────────────────────────────
@@ -200,8 +239,13 @@ export class Agent {
      * Called on each turn. Override to handle user speech.
      * @param signal — AbortSignal that fires when a newer turn supersedes this one.
      *                 Pass it to LLM/HTTP calls so they cancel immediately.
+     *
+     * When model is "pinecall:*", the server handles LLM automatically and this
+     * method is not called. Override for BYO-LLM (Anthropic, etc.).
      */
-    async onTurn(turn: Turn, call: Call, history: ConversationHistory, signal: AbortSignal): Promise<void> { }
+    async onTurn(turn: Turn, call: Call, history: ConversationHistory, signal: AbortSignal): Promise<void> {
+        // No-op by default. Override in subclass for BYO-LLM.
+    }
 
     // ── Event hooks (override in subclass) ───────────────────────────────
 
@@ -302,6 +346,23 @@ export class Agent {
         this._core.on("message.confirmed", (e, call) => this.onMessageConfirmed(e, call));
         this._core.on("reply.rejected", (e, call) => this.onReplyRejected(e, call));
 
+        // Server-side tool calling: execute tools locally, send results back
+        this._core.on("llm.tool_call" as any, (event: any, call: Call) => {
+            console.log(`[Agent] 📥 llm.tool_call received, _serverSideLLM=${this._serverSideLLM}, call_id=${call?.id}`);
+            if (!this._serverSideLLM) return;
+
+            const msgId = event.msg_id as string;
+            const toolCalls = event.tool_calls as Array<{ id: string; name: string; arguments: string }>;
+
+            console.log(`[Agent] 🔧 Executing ${toolCalls.length} tools: ${toolCalls.map(t => t.name).join(", ")}`);
+            this._core._emit("agent.log" as any, call, `🔧 llm.tool_call tools=${toolCalls.map(t => t.name).join(",")}` as any);
+
+            // Execute tools and send results back (fire-and-forget)
+            this._executeServerTools(toolCalls, call, msgId).catch((err) => {
+                console.error(`[Agent] Error executing server tools:`, err);
+            });
+        });
+
         // Channels
         this._core.on("channel.added", (type, ref) => this.onChannelAdded(type, ref));
 
@@ -319,6 +380,9 @@ export class Agent {
         //
         const turnEvent = this.turnEvent;
         this._core.on(turnEvent, (turn: Turn, call: Call) => {
+            // Server-side LLM: skip client-side onTurn
+            if (this._serverSideLLM) return;
+
             const history = this._histories.get(call.id);
             if (!history) return;
 
@@ -353,6 +417,49 @@ export class Agent {
                         this._turnAbort.delete(call.id);
                     }
                 });
+        });
+    }
+
+    /** @internal Execute tools requested by server-side LLM and send results back. */
+    private async _executeServerTools(
+        toolCalls: Array<{ id: string; name: string; arguments: string }>,
+        call: Call,
+        msgId: string,
+    ): Promise<void> {
+        console.log(`[Agent] _executeServerTools msg_id=${msgId} tools=${toolCalls.map(t => t.name).join(",")}`);
+        const results: Array<{ tool_call_id: string; result: unknown }> = [];
+
+        for (const tc of toolCalls) {
+            let result: unknown;
+            try {
+                const args = JSON.parse(tc.arguments);
+                console.log(`[Agent] 🔨 Calling tool '${tc.name}' with args:`, JSON.stringify(args));
+                const handler = (this as any)[tc.name];
+                if (typeof handler === "function") {
+                    result = await handler.call(this, args, call);
+                    console.log(`[Agent] ✅ Tool '${tc.name}' returned:`, JSON.stringify(result).slice(0, 200));
+                } else {
+                    console.error(`[Agent] ❌ Unknown tool: ${tc.name} — available methods:`, Object.getOwnPropertyNames(Object.getPrototypeOf(this)).filter(m => !m.startsWith('_')));
+                    result = { error: `Unknown tool: ${tc.name}` };
+                }
+            } catch (err) {
+                console.error(`[Agent] ❌ Tool '${tc.name}' threw:`, err);
+                result = { error: String(err) };
+            }
+
+            // Emit tool result event for TUI logging
+            this._core._emit("llm.tool_result" as any, call, { name: tc.name, result } as any);
+
+            results.push({ tool_call_id: tc.id, result });
+        }
+
+        console.log(`[Agent] 📤 Sending ${results.length} tool results back to server for msg_id=${msgId}`);
+        // Send results back to server
+        (this._core as any)._send({
+            event: "llm.tool_result",
+            call_id: call.id,
+            msg_id: msgId,
+            results,
         });
     }
 }

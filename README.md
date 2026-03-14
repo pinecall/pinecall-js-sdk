@@ -32,7 +32,6 @@ npm install @pinecall/sdk
 
 ```bash
 export PINECALL_API_KEY=pk_...
-export OPENAI_API_KEY=sk-...     # only for GPTAgent / agent / dial commands
 ```
 
 > Get your API key at [app.pinecall.io](https://app.pinecall.io)
@@ -48,7 +47,7 @@ export OPENAI_API_KEY=sk-...     # only for GPTAgent / agent / dial commands
 import { GPTAgent, Phone } from "@pinecall/sdk/ai";
 
 class Receptionist extends GPTAgent {
-    model = "gpt-4.1-nano";
+    model = "gpt-4.1-nano";  // runs server-side (no API key needed)
     phone = new Phone({
         number: "+13186330963",
         voice: "elevenlabs:EXAVITQu4vr4xnSDxMaL",
@@ -68,7 +67,7 @@ pinecall run Receptionist                    # inbound — wait for calls
 pinecall run Receptionist --dial +1415555..  # outbound — dial from agent's phone
 ```
 
-### Raw SDK (no GPTAgent)
+### Raw SDK
 
 ```typescript
 import { Pinecall } from "@pinecall/sdk";
@@ -132,17 +131,20 @@ While a call is active:
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `PINECALL_API_KEY` | Yes | Your Pinecall API key |
-| `OPENAI_API_KEY` | For GPTAgent | OpenAI API key |
 | `PINECALL_URL` | No | Custom server URL |
 
 ---
 
 ## GPTAgent
 
-`@pinecall/sdk/ai` — class-based agent with OpenAI, conversation history, and tool calling. `openai` is an optional peer dependency.
+`@pinecall/sdk/ai` — class-based agent with **server-side LLM**, conversation history, and tool calling.
 
-```bash
-npm install openai
+The LLM runs entirely on the Pinecall server — zero SDK round-trips, no API key management. The SDK only handles tool execution locally.
+
+```
+User speaks → Server (STT → LLM → TTS) → audio back
+                ↕ tool calls via WebSocket ↕
+              SDK executes tools locally
 ```
 
 ### Agent Fields
@@ -151,12 +153,11 @@ npm install openai
 import { GPTAgent, Phone, WebRTC } from "@pinecall/sdk/ai";
 
 class MyAgent extends GPTAgent {
-    // LLM
+    // LLM (runs server-side)
     model = "gpt-4.1-nano";
     instructions = "You are helpful.";
     temperature = 0.7;
     maxTokens = 150;
-    turnEvent = "eager.turn";   // or "turn.end"
 
     // Audio (agent-level = defaults for all channels)
     voice = "elevenlabs:EXAVITQu4vr4xnSDxMaL";
@@ -171,12 +172,11 @@ class MyAgent extends GPTAgent {
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `model` | string | `"gpt-4.1-nano"` | OpenAI model |
+| `model` | string | `"gpt-4.1-nano"` | OpenAI model (runs server-side) |
 | `instructions` | string | `"You are a helpful voice assistant."` | System prompt |
 | `greeting` | string | — | Fallback greeting (channel greeting takes priority) |
 | `temperature` | number | — | LLM temperature |
 | `maxTokens` | number | — | Max response tokens |
-| `turnEvent` | string | `"eager.turn"` | Which turn event triggers the LLM |
 | `voice` | string / object | — | Voice shortcut or full TTS config |
 | `language` | string | — | Language code |
 | `stt` | string / object | — | STT config |
@@ -235,12 +235,15 @@ class MyAgent extends GPTAgent {
 
 ### Tool Calling
 
-Tools are class methods. Register schemas with `defineTool()`. The call is auto-held while tools execute (user hears music, not silence).
+Tools are class methods. Register schemas with `defineTool()`.
 
-Tool methods receive `(args, call)` — use `this.log(call, ...)` to log to the TUI:
+Tool methods receive `(args, call)` — use `this.log(call, ...)` to log to the TUI.
+
+During tool execution, the call is automatically placed **on hold** with music until the tool returns and the LLM generates a follow-up response.
 
 ```javascript
 class Receptionist extends GPTAgent {
+    model = "gpt-4.1-nano";
     phone = new Phone({
         number: "+13186330963",
         voice: "elevenlabs:EXAVITQu4vr4xnSDxMaL",
@@ -265,9 +268,22 @@ Receptionist.defineTool("bookReservation", "Book a table", {
 export default Receptionist;
 ```
 
+#### Tool Calling Flow
+
+```
+1. User speaks → server runs STT + sends to OpenAI with tool schemas
+2. OpenAI returns tool_calls → server sends "llm.tool_call" to SDK
+3. Call goes ON HOLD (music plays) while SDK executes tool locally
+4. SDK sends "llm.tool_result" → server passes result to OpenAI
+5. OpenAI generates follow-up → call goes OFF HOLD → TTS plays response
+6. Repeat up to maxToolRounds (default: 5)
+```
+
+> Tools always execute **locally** in your SDK process — your code, your database, your APIs. The server only proxies the LLM ↔ tool communication.
+
 ### Agent Base Class (BYO LLM)
 
-`GPTAgent` extends `Agent`. Use `Agent` directly with any LLM — no OpenAI dependency:
+`GPTAgent` extends `Agent`. Use `Agent` directly with any LLM:
 
 ```javascript
 import { Agent, Phone } from "@pinecall/sdk/ai";
@@ -290,6 +306,18 @@ class MyBot extends Agent {
     onBotInterrupted(event, call) {}
     // ... all events available as class methods
 }
+```
+
+You can also set `model` on `Agent` directly for server-side LLM with tools (same as GPTAgent but without the default model):
+
+```javascript
+class Minimal extends Agent {
+    model = "gpt-4.1-nano";    // server handles everything
+    phone = new Phone({ number: "+13186330963", greeting: "Hello!" });
+    instructions = "You are a helpful voice assistant. Be concise.";
+}
+
+export default Minimal;
 ```
 
 ### Running
@@ -620,13 +648,12 @@ config: {
 ```typescript
 turnDetection: "smart_turn"
 
-// Full config:
-config: {
-    turn_detection: {
-        mode: "smart_turn",
-        smart_turn_threshold: 0.7,
-        max_silence_seconds: 2.0,
-    }
+// Object form with options:
+turnDetection: {
+    mode: "smart_turn",
+    silenceMs: 400,              // silence before analysis (default: 400)
+    threshold: 0.7,              // end-of-turn probability threshold
+    maxSilenceSeconds: 3.0,      // force end after this much silence
 }
 ```
 
@@ -635,6 +662,14 @@ config: {
 | `"smart_turn"` | ML prosody analysis | Most use cases |
 | `"native"` | STT built-in (Flux, Deepgram) | Lowest latency |
 | `"silence"` | Pure silence timeout | Simple bots |
+
+#### SmartTurn Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `silenceMs` | int | `400` | Milliseconds of silence before running ML analysis |
+| `threshold` | float | `0.7` | Probability threshold — higher = more patient |
+| `maxSilenceSeconds` | float | `3.0` | Force turn end after this silence duration |
 
 ### Interruption
 
