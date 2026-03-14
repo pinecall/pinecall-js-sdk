@@ -36,6 +36,22 @@ const PROMPT = chalk.hex("#c084fc")("  ◇ ");
 
 let _rl: readline.Interface | null = null;
 
+/** Active audio playback child process (for Ctrl+C cancellation). */
+let _playingProcess: import("node:child_process").ChildProcess | null = null;
+let _playingCleanup: (() => void) | null = null;
+
+/** Set the currently playing audio process (called by /play command). */
+export function setPlayingProcess(proc: any, cleanup?: () => void): void {
+    _playingProcess = proc;
+    _playingCleanup = cleanup ?? null;
+}
+
+/** Clear the playing audio process reference. */
+export function clearPlayingProcess(): void {
+    _playingProcess = null;
+    _playingCleanup = null;
+}
+
 /**
  * Clear the current readline prompt from the terminal.
  * Call this before writing any output to prevent interleaving.
@@ -112,6 +128,14 @@ export function startInput(opts: InputOptions): void {
 
     // ── Ctrl+C to exit ──
     rl.on("SIGINT", async () => {
+        // If audio is playing, kill it instead of exiting
+        if (_playingProcess) {
+            _playingProcess.kill();
+            if (_playingCleanup) _playingCleanup();
+            _playingProcess = null;
+            _playingCleanup = null;
+            return;
+        }
         write("\n");
         logLine(`${MUTED("Disconnecting…")}`);
         try {

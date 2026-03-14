@@ -416,12 +416,13 @@ async function handlePlay(ctx: CommandContext, args: string[]): Promise<void> {
     if (match.gender) log(`  ${DIM("Gender:")} ${match.gender}`);
     if (match.description) log(`  ${DIM(match.description.slice(0, 80))}`);
 
-    // Download and play (non-blocking so Ctrl+C can cancel)
+    // Download and play
     try {
         const { spawn } = await import("node:child_process");
         const { writeFileSync, unlinkSync } = await import("node:fs");
         const { tmpdir } = await import("node:os");
         const path = await import("node:path");
+        const { setPlayingProcess, clearPlayingProcess } = await import("./input.js");
 
         const tmpFile = path.join(tmpdir(), `pinecall-preview-${Date.now()}.mp3`);
 
@@ -433,49 +434,38 @@ async function handlePlay(ctx: CommandContext, args: string[]): Promise<void> {
         const buffer = Buffer.from(await response.arrayBuffer());
         writeFileSync(tmpFile, buffer);
 
-        // Play with spawn — Ctrl+C kills child, not the CLI
-        const player = spawn("afplay", [tmpFile], { stdio: "ignore" });
-
-        const cleanup = () => {
-            player.kill();
+        const doCleanup = () => {
             try { unlinkSync(tmpFile); } catch { /* ignore */ }
-        };
-
-        // Ctrl+C → kill player only
-        const onSigint = () => {
-            cleanup();
             log(`  ${DIM("■ Stopped")}`);
         };
-        process.once("SIGINT", onSigint);
 
-        await new Promise<void>((resolve) => {
-            player.on("close", () => resolve());
+        // Spawn player detached so we fully control its lifecycle
+        const player = spawn("afplay", [tmpFile], { stdio: "ignore" });
+
+        // Register with input.ts — Ctrl+C will kill this process
+        setPlayingProcess(player, doCleanup);
+
+        const stopped = await new Promise<boolean>((resolve) => {
+            player.on("close", (code) => {
+                // code null = killed by signal (Ctrl+C), 0 = natural end
+                resolve(code !== 0 && code !== null);
+            });
             player.on("error", () => {
-                // afplay not found, try aplay
+                // afplay not found — try aplay
                 const fallback = spawn("aplay", [tmpFile], { stdio: "ignore" });
-                process.removeListener("SIGINT", onSigint);
-                const onSigint2 = () => {
-                    fallback.kill();
-                    try { unlinkSync(tmpFile); } catch { /* ignore */ }
-                    log(`  ${DIM("■ Stopped")}`);
-                };
-                process.once("SIGINT", onSigint2);
-                fallback.on("close", () => {
-                    process.removeListener("SIGINT", onSigint2);
-                    resolve();
-                });
+                setPlayingProcess(fallback, doCleanup);
+                fallback.on("close", (code) => resolve(code !== 0 && code !== null));
                 fallback.on("error", () => {
-                    process.removeListener("SIGINT", onSigint2);
                     log(`${WARN("Could not play audio. Preview URL:")}`);
                     log(`  ${DIM(match.preview_url)}`);
-                    resolve();
+                    resolve(false);
                 });
             });
         });
 
-        process.removeListener("SIGINT", onSigint);
+        clearPlayingProcess();
         try { unlinkSync(tmpFile); } catch { /* ignore */ }
-        log(`${OK("✓")} Done`);
+        if (!stopped) log(`${OK("✓")} Done`);
     } catch (err) {
         log(`${ERR("Playback error:")} ${err}`);
     }
