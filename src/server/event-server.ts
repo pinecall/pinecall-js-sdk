@@ -44,7 +44,7 @@ export interface EventServerOptions {
 
 const AGENT_EVENTS = [
     "call.started", "call.ended",
-    "channel.added", "channel.removed",
+    "channel.added", "channel.configured", "channel.removed",
 ] as const;
 
 const CALL_EVENTS = [
@@ -54,11 +54,15 @@ const CALL_EVENTS = [
     "turn.continued", "turn.resumed",
     "bot.speaking", "bot.word", "bot.finished", "bot.interrupted",
     "message.confirmed", "reply.rejected",
+    "audio.metrics",
+    "call.held", "call.unheld",
+    "call.muted", "call.unmuted",
 ] as const;
 
 const LLM_EVENTS = [
     "llm.start", "llm.token", "llm.done",
     "llm.tool_call", "llm.tool_result",
+    "llm.error",
 ] as const;
 
 // ── Internals ────────────────────────────────────────────────────────────

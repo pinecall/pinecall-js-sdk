@@ -28,6 +28,10 @@ export const CALL_PROXY_EVENTS = [
     "message.confirmed",
     "reply.rejected",
     "audio.metrics",
+    "call.held",
+    "call.unheld",
+    "call.muted",
+    "call.unmuted",
 ] as const;
 
 /**
