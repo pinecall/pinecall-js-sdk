@@ -27,6 +27,8 @@ export interface ChatMessage {
 
 export class ConversationHistory {
     private _messages: ChatMessage[] = [];
+    /** O(1) dedup for assistant message IDs. */
+    private _messageIds = new Set<string>();
     /** Tracks bot text from bot.speaking events for history on bot.finished. */
     private _pendingBotText = new Map<string, string>();
 
@@ -69,8 +71,9 @@ export class ConversationHistory {
 
     addAssistant(text: string, messageId?: string): void {
         if (!text) return; // skip empty
-        // Skip duplicate by messageId
-        if (messageId && this._messages.some(m => m.role === "assistant" && m.messageId === messageId)) return;
+        // O(1) dedup by messageId
+        if (messageId && this._messageIds.has(messageId)) return;
+        if (messageId) this._messageIds.add(messageId);
         this._messages.push({ role: "assistant", content: text, messageId });
         this._notify();
     }
@@ -97,6 +100,7 @@ export class ConversationHistory {
         const idx = this._messages.findIndex((m) => m.messageId === messageId);
         if (idx !== -1) {
             this._messages.splice(idx, 1);
+            this._messageIds.delete(messageId);
             this._notify();
         }
     }
@@ -118,6 +122,7 @@ export class ConversationHistory {
     /** Clear all messages. */
     clear(): void {
         this._messages = [];
+        this._messageIds.clear();
         this._notify();
     }
 

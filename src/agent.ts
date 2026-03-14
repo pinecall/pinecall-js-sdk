@@ -130,6 +130,8 @@ export class Agent extends TypedEmitter<AgentEvents> {
     private _sendRaw: (data: Record<string, unknown>) => void;
     private _serverReady = false;
     private _pendingQueue: Record<string, unknown>[] = [];
+    /** Tracks registered channels for re-registration on reconnect. */
+    private _channels = new Map<string, { type: string; ref?: string; config?: ChannelConfig }>();
 
     /** @internal — created by Pinecall.agent() */
     constructor(
@@ -187,6 +189,10 @@ export class Agent extends TypedEmitter<AgentEvents> {
      * agent.addChannel("webrtc");
      */
     addChannel(type: "phone" | "webrtc" | "mic", ref?: string, config?: ChannelConfig): void {
+        // Track for re-registration on reconnect
+        const key = ref ?? type;
+        this._channels.set(key, { type, ref, config });
+
         this._send({
             event: "channel.add",
             agent_id: this.id,
@@ -216,6 +222,7 @@ export class Agent extends TypedEmitter<AgentEvents> {
      * @example agent.removeChannel("+19035551234");
      */
     removeChannel(ref: string): void {
+        this._channels.delete(ref);
         this._send({
             event: "channel.remove",
             agent_id: this.id,
@@ -370,6 +377,8 @@ export class Agent extends TypedEmitter<AgentEvents> {
             call._end(reason);
         }
         this._calls.clear();
+        // Reset server-ready so _flushPending re-runs on reconnect
+        this._serverReady = false;
     }
 
     /** @internal Emit an event — used by Pinecall to trigger events on this agent. */
@@ -380,7 +389,21 @@ export class Agent extends TypedEmitter<AgentEvents> {
     /** @internal Mark agent as server-ready and flush buffered messages. */
     _flushPending(): void {
         this._serverReady = true;
+
+        // Re-register all tracked channels (critical for reconnection)
+        for (const [, ch] of this._channels) {
+            this._sendRaw({
+                event: "channel.add",
+                agent_id: this.id,
+                type: ch.type,
+                ...(ch.ref ? { ref: ch.ref } : {}),
+                ...buildShortcutPayload(ch.config),
+            });
+        }
+
+        // Flush any other pending messages (skip channel.add — already handled above)
         for (const msg of this._pendingQueue) {
+            if (msg.event === "channel.add") continue;
             this._sendRaw(msg);
         }
         this._pendingQueue = [];

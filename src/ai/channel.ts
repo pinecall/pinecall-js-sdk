@@ -80,16 +80,22 @@ export class Phone extends Channel {
 
 /** @internal Warn about common config key typos so they don't silently get ignored. */
 function _warnTypos(cfg: Record<string, unknown>): void {
-    const known: Record<string, string> = {
+    // Valid keys on Phone/Channel — never warn about these.
+    const validKeys = new Set([
+        "number", "voice", "language", "stt", "turnDetection",
+        "interruption", "greeting", "config",
+    ]);
+    const typos: Record<string, string> = {
         sst: "stt",
         sts: "stt",
         turndetection: "turnDetection",
         turn_detection: "turnDetection",
-        voiceId: "voice",
+        voiceid: "voice",
         voice_id: "voice",
     };
     for (const key of Object.keys(cfg)) {
-        const suggestion = known[key] ?? known[key.toLowerCase()];
+        if (validKeys.has(key)) continue;
+        const suggestion = typos[key] ?? typos[key.toLowerCase()];
         if (suggestion) {
             console.warn(
                 `[Pinecall] Phone config: unknown key "${key}" — did you mean "${suggestion}"? ` +

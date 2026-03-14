@@ -336,6 +336,10 @@ export class Pinecall extends TypedEmitter<PinecallEvents> {
             this.emit("disconnected", reason);
 
             if (this._reconnector) {
+                // End active calls and reset agent state for re-registration
+                for (const agent of this._agents.values()) {
+                    agent._endAllCalls("connection_lost");
+                }
                 this._attemptReconnect().catch(() => {
                     this._connectReject?.(
                         new PinecallError("Reconnection failed", "CONNECTION_FAILED"),

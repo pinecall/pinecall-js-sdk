@@ -102,8 +102,8 @@ export class GPTAgent extends Agent {
 
     // ── onTurn override: OpenAI streaming ────────────────────────────────
 
-    override async onTurn(turn: Turn, call: Call, history: ConversationHistory): Promise<void> {
-        await this._runLLM(turn, call, history, 0);
+    override async onTurn(turn: Turn, call: Call, history: ConversationHistory, signal: AbortSignal): Promise<void> {
+        await this._runLLM(turn, call, history, 0, signal);
     }
 
     // ── Internal: LLM round (streams text, handles tools, recurses) ─────
@@ -113,8 +113,10 @@ export class GPTAgent extends Agent {
         call: Call,
         history: ConversationHistory,
         round: number,
+        signal: AbortSignal,
     ): Promise<void> {
         if (round >= this.maxToolRounds) return;
+        if (signal.aborted) return;
 
         const tools = this._getOpenAITools();
 
@@ -124,48 +126,72 @@ export class GPTAgent extends Agent {
             messageId: turn.messageId, text: turn.text,
         } as any);
 
-        const completion = await this._openai.chat.completions.create({
-            model: this.model,
-            messages: history.toMessages() as unknown as OpenAI.ChatCompletionMessageParam[],
-            stream: true,
-            ...(tools.length > 0 ? { tools } : {}),
-            ...(this.temperature !== undefined ? { temperature: this.temperature } : {}),
-            ...(this.maxTokens !== undefined ? { max_tokens: this.maxTokens } : {}),
-        });
+        // Pass the abort signal to the OpenAI SDK so the HTTP request is
+        // cancelled instantly when a newer turn supersedes this one.
+        let completion: AsyncIterable<any>;
+        try {
+            completion = await this._openai.chat.completions.create({
+                model: this.model,
+                messages: history.toMessages() as unknown as OpenAI.ChatCompletionMessageParam[],
+                stream: true,
+                ...(tools.length > 0 ? { tools } : {}),
+                ...(this.temperature !== undefined ? { temperature: this.temperature } : {}),
+                ...(this.maxTokens !== undefined ? { max_tokens: this.maxTokens } : {}),
+            }, { signal });
+        } catch (err: any) {
+            // AbortError is expected when a newer turn cancels this one
+            if (signal.aborted || err?.name === "AbortError") return;
+            throw err;
+        }
+
+        if (signal.aborted) return;
 
         let reply = "";
         const toolCalls: Array<{ id: string; name: string; args: string }> = [];
         // First round replies to the user's message; tool-continuation rounds use a fresh stream
         const stream = round === 0 ? call.replyStream(turn) : call.replyStream();
 
-        for await (const chunk of completion) {
-            if (stream.aborted) break;
+        try {
+            for await (const chunk of completion) {
+                if (stream.aborted || signal.aborted) break;
 
-            const choice = chunk.choices[0];
-            if (!choice) continue;
+                const choice = chunk.choices[0];
+                if (!choice) continue;
 
-            const token = choice.delta?.content;
-            if (token) {
-                stream.write(token);
-                reply += token;
-                this._core._emit("llm.token" as any, call, { token } as any);
-            }
+                const token = choice.delta?.content;
+                if (token) {
+                    stream.write(token);
+                    reply += token;
+                    this._core._emit("llm.token" as any, call, { token } as any);
+                }
 
-            if (choice.delta?.tool_calls) {
-                for (const tc of choice.delta.tool_calls) {
-                    if (tc.index !== undefined) {
-                        if (!toolCalls[tc.index]) {
-                            toolCalls[tc.index] = { id: tc.id ?? "", name: tc.function?.name ?? "", args: "" };
+                if (choice.delta?.tool_calls) {
+                    for (const tc of choice.delta.tool_calls) {
+                        if (tc.index !== undefined) {
+                            if (!toolCalls[tc.index]) {
+                                toolCalls[tc.index] = { id: tc.id ?? "", name: tc.function?.name ?? "", args: "" };
+                            }
+                            if (tc.id) toolCalls[tc.index].id = tc.id;
+                            if (tc.function?.name) toolCalls[tc.index].name = tc.function.name;
+                            if (tc.function?.arguments) toolCalls[tc.index].args += tc.function.arguments;
                         }
-                        if (tc.id) toolCalls[tc.index].id = tc.id;
-                        if (tc.function?.name) toolCalls[tc.index].name = tc.function.name;
-                        if (tc.function?.arguments) toolCalls[tc.index].args += tc.function.arguments;
                     }
                 }
             }
+        } catch (err: any) {
+            // AbortError during streaming is expected
+            if (signal.aborted || err?.name === "AbortError") {
+                stream.abort();
+                return;
+            }
+            stream.abort();
+            throw err;
         }
 
         stream.end();
+
+        // If aborted while streaming, don't add to history or continue
+        if (signal.aborted) return;
 
         // Add any text reply to history
         if (reply && !stream.aborted) {
@@ -178,6 +204,9 @@ export class GPTAgent extends Agent {
         // No tool calls → done
         if (toolCalls.length === 0 || stream.aborted) return;
 
+        // Check abort before starting tool execution
+        if (signal.aborted) return;
+
         // Emit tool call events
         for (const tc of toolCalls) {
             this._core._emit("llm.tool_call" as any, call, { name: tc.name, args: tc.args } as any);
@@ -189,7 +218,10 @@ export class GPTAgent extends Agent {
 
         // Execute tools and recurse
         await this._executeTools(toolCalls, history, call);
-        await this._runLLM(turn, call, history, round + 1);
+
+        // Check abort before recursing into the next LLM round
+        if (signal.aborted) return;
+        await this._runLLM(turn, call, history, round + 1, signal);
     }
 
     // ── Internal: execute tool calls ─────────────────────────────────────

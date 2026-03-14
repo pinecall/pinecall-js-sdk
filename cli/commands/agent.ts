@@ -1,7 +1,7 @@
 /**
  * pinecall agent — inbound voice agent command.
  *
- * Thin orchestrator: parse args → resolve env → build agent → TUI → connect.
+ * Thin orchestrator: parse args → resolve env → build agent → connect → log.
  */
 
 import { Pinecall } from "@pinecall/sdk";
@@ -11,12 +11,9 @@ import { resolveEnv, requireOpenAI } from "../lib/env.js";
 import { getPreset } from "../lib/presets.js";
 import { DEFAULT_MODEL } from "../lib/constants.js";
 import { pickPhone } from "../lib/phone-picker.js";
-import { type LLMContext } from "../lib/llm.js";
-import { streamLLMReplyWithTUI } from "../ui/tui-llm.js";
-import { createTUI } from "../ui/tui.js";
-import { createCallSidebar } from "../ui/tui-sidebar.js";
-import { attachTUIEvents } from "../ui/tui-events.js";
-import { setupCommandPalette } from "../ui/tui-commands.js";
+import { attachEvents, streamLLMReply, type LLMContext } from "../ui/events.js";
+import { printHeader, printConfig, ensureCursor } from "../ui/renderer.js";
+import { startInput } from "../ui/input.js";
 
 export default async function agent(argv: string[]): Promise<void> {
     // ── Parse args ──
@@ -45,6 +42,17 @@ export default async function agent(argv: string[]): Promise<void> {
 
     a.addChannel("phone", phone);
 
+    // ── Show header ──
+    printHeader("Agent");
+    printConfig({
+        phone,
+        voice: preset.voice,
+        stt: typeof preset.stt === "string" ? preset.stt : (preset.stt as any).provider,
+        turnDetection: typeof preset.turnDetection === "string" ? preset.turnDetection : "smart",
+        model: DEFAULT_MODEL,
+        lang,
+    });
+
     // ── LLM context (per-call history) ──
     const histories = new Map<string, { role: string; content: string }[]>();
 
@@ -60,23 +68,10 @@ export default async function agent(argv: string[]): Promise<void> {
         };
     }
 
-    // ── TUI ──
-    const tui = createTUI();
-    const sidebar = createCallSidebar(tui);
-
-    // Show config in call log
-    tui.callLog.log(`{cyan-fg}Phone{/cyan-fg}  ${phone}`);
-    tui.callLog.log(`{cyan-fg}Voice{/cyan-fg}  ${preset.voice}`);
-    tui.callLog.log(`{cyan-fg}STT{/cyan-fg}    ${typeof preset.stt === "string" ? preset.stt : (preset.stt as any).provider}`);
-    tui.callLog.log(`{cyan-fg}Model{/cyan-fg}  ${DEFAULT_MODEL}`);
-    tui.callLog.log(`{cyan-fg}Lang{/cyan-fg}   ${lang}`);
-    tui.callLog.log("");
-    tui.screen.render();
-
-    // ── Events ──
-    attachTUIEvents(a, sidebar, (turn, call) => {
+    // ── Events (single log stream) ──
+    attachEvents(a, (turn, call) => {
         const ctx = getLLMContext(call.id);
-        streamLLMReplyWithTUI(call, turn, ctx, sidebar);
+        streamLLMReply(call, turn, ctx);
     });
 
     a.on("call.started", (call) => {
@@ -90,10 +85,7 @@ export default async function agent(argv: string[]): Promise<void> {
     // ── Connect & run ──
     await pc.connect();
 
-    setupCommandPalette({
-        tui,
-        sidebar,
-        agent: a,
-        pc,
-    });
+    // ── Input handler ──
+    startInput({ agent: a, pc });
+    ensureCursor();
 }

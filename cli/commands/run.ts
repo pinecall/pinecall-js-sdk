@@ -11,11 +11,10 @@ import { resolveEnv, requireOpenAI } from "../lib/env.js";
 import { parseArgs } from "../lib/args.js";
 import { pickPhone } from "../lib/phone-picker.js";
 import { CliError } from "../lib/errors.js";
-import { createTUI } from "../ui/tui.js";
-import { createCallSidebar } from "../ui/tui-sidebar.js";
-import { attachTUIEvents } from "../ui/tui-events.js";
-import { attachTUILLM } from "../ui/tui-llm.js";
-import { setupCommandPalette } from "../ui/tui-commands.js";
+import { attachEvents, attachLLMEvents } from "../ui/events.js";
+import { printHeader, logLine, ensureCursor } from "../ui/renderer.js";
+import { ACCENT, DIM } from "../ui/theme.js";
+import { startInput } from "../ui/input.js";
 
 // ── File resolution ──────────────────────────────────────────────────────
 
@@ -26,7 +25,6 @@ async function resolveAgentFile(input: string): Promise<string> {
     const fs = await import("node:fs");
     const cwd = process.cwd();
 
-    // Candidates: input as-is, then input + each extension
     const candidates: string[] = [input];
     const hasExt = EXTENSIONS.some(ext => input.endsWith(ext));
     if (!hasExt) {
@@ -35,7 +33,6 @@ async function resolveAgentFile(input: string): Promise<string> {
         }
     }
 
-    // Try each candidate in cwd
     for (const candidate of candidates) {
         const full = path.resolve(cwd, candidate);
         if (fs.existsSync(full)) return full;
@@ -87,7 +84,7 @@ export async function run(argv: string[]): Promise<void> {
         url: env.url,
     });
 
-    // Add phone channel (skip if the class already defines one)
+    // Add phone channel
     const phoneArg = args.values.get("--phone");
     const dialTo = args.values.get("--dial");
 
@@ -99,40 +96,31 @@ export async function run(argv: string[]): Promise<void> {
         agent.addPhone(phone);
     }
 
-    // ── TUI ──
-    const tui = createTUI();
-    const sidebar = createCallSidebar(tui);
-
+    // ── Show header ──
     const agentName = AgentClass.name || "Agent";
-    tui.callLog.log(`{cyan-fg}${agentName}{/cyan-fg} is live`);
-    if (agent.model) tui.callLog.log(`{cyan-fg}Model{/cyan-fg}  ${agent.model}`);
-    if (agent.voice) tui.callLog.log(`{cyan-fg}Voice{/cyan-fg}  ${agent.voice}`);
-    if (agent.language) tui.callLog.log(`{cyan-fg}Lang{/cyan-fg}   ${agent.language}`);
-    tui.callLog.log("");
-    tui.llmLog.log("{gray-fg}Waiting for first call…{/gray-fg}");
-    tui.screen.render();
+    printHeader(agentName);
+    if (agent.model) logLine(`${DIM("Model")}  ${agent.model}`);
+    if (agent.voice) logLine(`${DIM("Voice")}  ${agent.voice}`);
+    if (agent.language) logLine(`${DIM("Lang")}   ${agent.language}`);
 
     // Start
     await agent.start();
 
-    // Attach CLI UI
-    attachTUIEvents(agent.core, sidebar);
-    attachTUILLM(agent.core, sidebar);
+    // ── Attach events (unified log stream) ──
+    attachEvents(agent.core);
+    attachLLMEvents(agent.core);
 
-    setupCommandPalette({
-        tui,
-        sidebar,
-        agent: agent.core,
-        pc: agent.pinecall,
-    });
+    // ── Input handler ──
+    startInput({ agent: agent.core, pc: agent.pinecall });
+    ensureCursor();
 
-    // Outbound dial — uses agent's phone as `from`
+    // Outbound dial
     if (dialTo) {
         const from = phoneArg ?? agent.phone?.number;
         if (!from) {
             throw new CliError("--dial requires a phone number on the agent (no phone configured)");
         }
-        sidebar.logCall("", `Dialing ${dialTo} from ${from}...`);
+        logLine(`${ACCENT("Dialing")} ${dialTo} from ${from}...`);
         await agent.dial({ to: dialTo, from });
     }
 

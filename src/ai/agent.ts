@@ -82,6 +82,10 @@ export class Agent {
     protected _core: CoreAgent;
     /** @internal */
     protected _histories = new Map<string, ConversationHistory>();
+    /** @internal — AbortController for the active LLM invocation per call. */
+    private _turnAbort = new Map<string, AbortController>();
+    /** @internal — turn_id currently being processed per call (dedup guard). */
+    private _activeTurnId = new Map<string, number>();
     /** @internal */
     protected _started = false;
 
@@ -192,8 +196,12 @@ export class Agent {
 
     // ── Lifecycle hooks (override in subclass) ───────────────────────────
 
-    /** Called on each turn. Override to handle user speech. */
-    async onTurn(turn: Turn, call: Call, history: ConversationHistory): Promise<void> { }
+    /**
+     * Called on each turn. Override to handle user speech.
+     * @param signal — AbortSignal that fires when a newer turn supersedes this one.
+     *                 Pass it to LLM/HTTP calls so they cancel immediately.
+     */
+    async onTurn(turn: Turn, call: Call, history: ConversationHistory, signal: AbortSignal): Promise<void> { }
 
     // ── Event hooks (override in subclass) ───────────────────────────────
 
@@ -217,6 +225,18 @@ export class Agent {
     onChannelAdded(type: string, ref: string): void { }
 
     // ── Internal ─────────────────────────────────────────────────────────
+
+    /** @internal Abort and clean up LLM state for a call. */
+    private _abortLLM(callId: string, call?: Call): void {
+        const ac = this._turnAbort.get(callId);
+        const turnId = this._activeTurnId.get(callId);
+        if (ac) {
+            if (call) this._core._emit("agent.log" as any, call, `⛔ _abortLLM turn_id=${turnId} aborted=${ac.signal.aborted}` as any);
+            ac.abort();
+        }
+        this._turnAbort.delete(callId);
+        this._activeTurnId.delete(callId);
+    }
 
     /** @internal */
     protected _greetingForCall(call: Call): string | undefined {
@@ -249,6 +269,7 @@ export class Agent {
         });
 
         this._core.on("call.ended", (call, reason) => {
+            this._abortLLM(call.id, call);
             this.onCallEnded(call, reason);
             this._histories.delete(call.id);
         });
@@ -263,7 +284,12 @@ export class Agent {
         this._core.on("eager.turn", (turn, call) => this.onEagerTurn(turn, call));
         this._core.on("turn.end", (turn, call) => this.onTurnEnd(turn, call));
         this._core.on("turn.pause", (e, call) => this.onTurnPause(e, call));
-        this._core.on("turn.continued", (e, call) => this.onTurnContinued(e, call));
+        this._core.on("turn.continued", (e, call) => {
+            // Abort in-flight LLM when the user keeps speaking (turn continued)
+            this._core._emit("agent.log" as any, call, `🔄 turn.continued → aborting LLM` as any);
+            this._abortLLM(call.id, call);
+            this.onTurnContinued(e, call);
+        });
         this._core.on("turn.resumed", (e, call) => this.onTurnResumed(e, call));
 
         // Bot
@@ -279,18 +305,54 @@ export class Agent {
         // Channels
         this._core.on("channel.added", (type, ref) => this.onChannelAdded(type, ref));
 
-        // onTurn handler
+        // ── onTurn handler: fire-and-forget with dedup + abort ───────────
+        //
+        // We do NOT await onTurn(). This lets new events process immediately.
+        //
+        // Dedup by turn_id: Flux can send multiple eager.turn events for the
+        // SAME user utterance (same turn_id, refined text/probability). We
+        // must NOT abort+restart for these — the first LLM call handles it.
+        //
+        // Only when a genuinely NEW turn arrives (different turn_id) do we
+        // abort the previous LLM and start fresh. turn.continued and
+        // call.ended also abort via _abortLLM().
+        //
         const turnEvent = this.turnEvent;
-        this._core.on(turnEvent, async (turn: Turn, call: Call) => {
+        this._core.on(turnEvent, (turn: Turn, call: Call) => {
             const history = this._histories.get(call.id);
             if (!history) return;
 
-            try {
-                await this.onTurn(turn, call, history);
-            } catch (err) {
-                console.error(`[Agent] Error in onTurn:`, err);
-                call.reply("Sorry, something went wrong. Please try again.");
+            // ── Dedup: skip if LLM is already running for this exact turn ──
+            if (this._activeTurnId.get(call.id) === turn.id) {
+                this._core._emit("agent.log" as any, call, `⏭️ eager.turn DEDUP turn_id=${turn.id}` as any);
+                return;
             }
+
+            // ── New turn: abort any previous in-flight LLM ──
+            this._core._emit("agent.log" as any, call, `🆕 eager.turn turn_id=${turn.id} text="${turn.text?.slice(0, 40)}"` as any);
+            this._abortLLM(call.id, call);
+
+            // Track this turn and create a fresh AbortController
+            const ac = new AbortController();
+            this._turnAbort.set(call.id, ac);
+            this._activeTurnId.set(call.id, turn.id);
+
+            // Fire-and-forget — do NOT await
+            this.onTurn(turn, call, history, ac.signal)
+                .catch((err) => {
+                    // Aborted turns are expected — don't log or reply
+                    if (ac.signal.aborted) return;
+                    console.error(`[Agent] Error in onTurn:`, err);
+                    call.reply("Sorry, something went wrong. Please try again.");
+                })
+                .finally(() => {
+                    // Clean up only if this is still the active turn
+                    // (a newer turn might have already replaced us)
+                    if (this._activeTurnId.get(call.id) === turn.id) {
+                        this._activeTurnId.delete(call.id);
+                        this._turnAbort.delete(call.id);
+                    }
+                });
         });
     }
 }

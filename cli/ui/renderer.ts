@@ -1,6 +1,9 @@
 /**
  * Renderer — low-level terminal output utilities.
  * Handles formatted logging, headers, config display, and timestamps.
+ *
+ * All output functions clear the readline prompt before writing
+ * and redraw it after, so events never mix with the prompt line.
  */
 
 import chalk from "chalk";
@@ -10,25 +13,57 @@ import {
     CLEAR_LINE, SHOW_CURSOR,
 } from "./theme.js";
 
-// ── Core write functions ─────────────────────────────────────────────────
+// Lazy import to avoid circular dependency at module load time.
+// input.ts imports renderer.ts, so we defer the reverse import.
+let _promptFns: { clearPrompt: () => void; redrawPrompt: () => void } | null = null;
 
-/** Write a line to stdout with the bar prefix. */
-export function logLine(msg: string): void {
-    process.stdout.write(`  ${BAR} ${msg}\n`);
+function getPromptFns() {
+    if (!_promptFns) {
+        try {
+            // Dynamic import at first use — by this time input.ts is fully loaded.
+            const mod = require("./input.js");
+            _promptFns = { clearPrompt: mod.clearPrompt, redrawPrompt: mod.redrawPrompt };
+        } catch {
+            _promptFns = { clearPrompt: () => {}, redrawPrompt: () => {} };
+        }
+    }
+    return _promptFns;
 }
 
-/** Write raw text to stdout. */
+// ── Core write functions ─────────────────────────────────────────────────
+
+/** Write a line to stdout with the bar prefix, prompt-aware. */
+export function logLine(msg: string): void {
+    const { clearPrompt, redrawPrompt } = getPromptFns();
+    clearPrompt();
+    process.stdout.write(`  ${BAR} ${msg}\n`);
+    redrawPrompt();
+}
+
+/**
+ * Write raw text to stdout.
+ * NOT prompt-aware — used for streaming tokens and partial output
+ * where clearing/redrawing the prompt would erase the content.
+ */
 export function write(text: string): void {
     process.stdout.write(text);
 }
 
-/** Write a line to stdout. */
+/** Write a line to stdout, prompt-aware. */
 export function writeln(text: string): void {
+    const { clearPrompt, redrawPrompt } = getPromptFns();
+    clearPrompt();
     process.stdout.write(text + "\n");
+    redrawPrompt();
 }
 
-/** Clear the current line and write inline (for live-updating text). */
+/**
+ * Clear the current line and write inline (for live-updating text like user.speaking).
+ * Clears prompt but does NOT redraw — the next logLine/writeln will redraw it.
+ */
 export function writeInline(text: string): void {
+    const { clearPrompt } = getPromptFns();
+    clearPrompt();
     process.stdout.write(CLEAR_LINE + text);
 }
 
@@ -47,8 +82,9 @@ export function dur(ms: number): string {
 
 // ── Formatted output ─────────────────────────────────────────────────────
 
-/** Print the CLI header banner. */
+/** Print the CLI header banner. Clears the terminal first. */
 export function printHeader(title: string): void {
+    process.stdout.write("\x1Bc"); // clear terminal
     writeln("");
     writeln(`  ${BRAND("⚡ pinecall")} ${DIM("—")} ${title}`);
     writeln(`  ${MUTED("─".repeat(Math.min(process.stdout.columns || 80, 60)))}`);
@@ -98,5 +134,5 @@ export function printConfig(opts: {
 
 /** Show cursor on process exit (prevents terminal corruption). */
 export function ensureCursor(): void {
-    write(SHOW_CURSOR);
+    process.stdout.write(SHOW_CURSOR);
 }
