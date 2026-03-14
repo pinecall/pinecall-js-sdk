@@ -6,7 +6,7 @@
  */
 
 import type { Agent, Call } from "@pinecall/sdk";
-import { MUTED, OK, WARN, ERR, DIM } from "./theme.js";
+import { MUTED, OK, WARN, ERR, DIM, ACCENT } from "./theme.js";
 import { logLine } from "./renderer.js";
 import { getActiveCalls, getSelectedCall, selectCall, getCallLabel } from "./events.js";
 
@@ -14,6 +14,8 @@ import { getActiveCalls, getSelectedCall, selectCall, getCallLabel } from "./eve
 
 export interface CommandContext {
     agent: Agent;
+    /** All loaded agents (for multi-agent /dial). Key = agent name/id. */
+    agents?: Map<string, Agent>;
     instructions: string;
     log?: (msg: string) => void;
     /** Returns raw LLM history for a call (JSON-serializable messages array). */
@@ -183,6 +185,89 @@ function handleConfig(ctx: CommandContext, args: string[]): void {
     }
 }
 
+// ── /dial command ────────────────────────────────────────────────────────
+
+function handleDial(ctx: CommandContext, args: string[]): void {
+    const log = ctx.log ?? logLine;
+
+    if (args.length === 0) {
+        log(`${DIM("Usage:")} /dial [agent] +number ["greeting"]`);
+        log(`  ${MUTED("/dial")} +1234567890`);
+        log(`  ${MUTED("/dial")} sales +1234567890`);
+        log(`  ${MUTED('/dial')} sales +1234567890 "Hello, this is support."`);
+        if (ctx.agents && ctx.agents.size > 0) {
+            log(`${DIM("Agents:")} ${[...ctx.agents.keys()].join(", ")}`);
+        }
+        return;
+    }
+
+    // Parse: /dial [agent] +number ["greeting"]
+    let targetAgent: Agent | null = null;
+    let number: string | null = null;
+    let greeting: string | undefined;
+
+    // Join args back and extract quoted greeting
+    const full = args.join(" ");
+    const quoteMatch = full.match(/"([^"]+)"/);
+    if (quoteMatch) greeting = quoteMatch[1];
+
+    // Remove quoted part for simpler parsing
+    const withoutQuote = full.replace(/"[^"]*"/, "").trim().split(/\s+/);
+
+    if (withoutQuote.length === 1) {
+        // /dial +number
+        number = withoutQuote[0];
+        targetAgent = ctx.agent;
+    } else if (withoutQuote.length >= 2) {
+        // /dial agent +number
+        const agentName = withoutQuote[0];
+        number = withoutQuote[1];
+
+        // Find agent by name
+        if (ctx.agents) {
+            targetAgent = ctx.agents.get(agentName) ?? null;
+            if (!targetAgent) {
+                // Fuzzy: try case-insensitive prefix
+                const lower = agentName.toLowerCase();
+                for (const [key, a] of ctx.agents) {
+                    if (key.toLowerCase().startsWith(lower) || a.id.toLowerCase().startsWith(lower)) {
+                        targetAgent = a;
+                        break;
+                    }
+                }
+            }
+        }
+        if (!targetAgent) targetAgent = ctx.agent;
+    }
+
+    if (!number || !number.startsWith("+")) {
+        log(`${ERR("Invalid number:")} must start with + (e.g. +1234567890)`);
+        return;
+    }
+
+    if (!targetAgent) {
+        log(`${ERR("No agent found")}`);
+        return;
+    }
+
+    // Find a "from" number on this agent
+    const channels = targetAgent.channels;
+    let from: string | null = null;
+    if (channels) {
+        for (const [ref, config] of channels) {
+            if (ref.startsWith("+")) { from = ref; break; }
+        }
+    }
+
+    if (!from) {
+        log(`${ERR("No phone number")} on agent ${targetAgent.id} — can't dial`);
+        return;
+    }
+
+    log(`${OK("⤴")} Dialing ${ACCENT(number)} from ${DIM(from)}${greeting ? ` ${DIM(`"${greeting}"`)}` : ""}`);
+    targetAgent.dial({ to: number, from, greeting });
+}
+
 // ── Command registry ─────────────────────────────────────────────────────
 
 const commands: Record<string, CommandDef> = {
@@ -190,6 +275,7 @@ const commands: Record<string, CommandDef> = {
     "/calls":   { description: "List active calls", handler: handleCalls },
     "/switch":  { description: "Select active call", usage: "<1|sid>", handler: handleSwitch },
     "/config":  { description: "Change call config", usage: "<voice|stt|turn|lang> <val>", handler: handleConfig },
+    "/dial":    { description: "Outbound call", usage: "[agent] +number [\"greeting\"]", handler: handleDial },
     "/hangup":  { description: "Hang up selected call (or all)", handler: handleHangup },
     "/hold":    { description: "Put selected call on hold", handler: handleHold },
     "/unhold":  { description: "Resume held call", handler: handleUnhold },

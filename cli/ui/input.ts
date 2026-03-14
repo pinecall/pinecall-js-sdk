@@ -22,7 +22,7 @@ import { MUTED, DIM } from "./theme.js";
 // ── Available commands for tab completion ────────────────────────────────
 
 const COMMAND_LIST = [
-    "/help", "/calls", "/switch", "/config",
+    "/help", "/calls", "/switch", "/config", "/dial",
     "/hangup", "/hold", "/unhold",
     "/mute", "/unmute", "/history",
 ];
@@ -58,6 +58,8 @@ export function redrawPrompt(): void {
 export interface InputOptions {
     agent: Agent;
     pc: Pinecall;
+    /** All loaded agents for multi-agent commands. */
+    agents?: Map<string, Agent>;
     /** Optional: returns raw LLM history for a call. */
     getHistory?: (callId: string) => unknown[] | undefined;
 }
@@ -96,6 +98,7 @@ export function startInput(opts: InputOptions): void {
         if (trimmed.startsWith("/")) {
             handleCommand(trimmed, {
                 agent,
+                agents: opts.agents,
                 instructions: "",
                 log: logLine,
                 getHistory: opts.getHistory,

@@ -655,23 +655,64 @@ Connections from unlisted origins are rejected at the WebSocket handshake.
   (your domain)        (voice infra)
 ```
 
-#### React Dashboard Example
+#### Bidirectional WS Protocol
+
+The EventServer is **bidirectional** — the UI receives events AND can send commands:
 
 ```typescript
-// Connect from any web UI
 const ws = new WebSocket("ws://localhost:4100");
 
+// ── Events: Server → UI ─────────────────────────────────────
 ws.onmessage = (e) => {
   const event = JSON.parse(e.data);
   switch (event.event) {
-    case "call.started":  addCall(event); break;
-    case "user.message":  addMessage(event.call_id, "user", event.text); break;
-    case "llm.token":     appendToken(event.call_id, event.token); break;
-    case "bot.word":      addWord(event.call_id, event.word); break;
-    case "call.ended":    removeCall(event.call_id); break;
+    case "server.connected": console.log("Agents:", event.agents); break;
+    case "call.started":     addCall(event); break;
+    case "user.message":     addMessage(event.call_id, "user", event.text); break;
+    case "llm.token":        appendToken(event.call_id, event.token); break;
+    case "bot.word":         addWord(event.call_id, event.word); break;
+    case "call.ended":       removeCall(event.call_id); break;
+    case "action.ok":        console.log("OK:", event.action); break;
+    case "error":            console.error(event.message); break;
   }
 };
+
+// ── Commands: UI → Server ────────────────────────────────────
+
+// Dial a number
+ws.send(JSON.stringify({
+  action: "dial",
+  agent_id: "sales",
+  to: "+1234567890",
+  from: "+0987654321",
+  greeting: "Hello, this is support calling."
+}));
+
+// Hang up a call
+ws.send(JSON.stringify({ action: "hangup", call_id: "CA..." }));
+
+// Configure mid-call
+ws.send(JSON.stringify({
+  action: "configure",
+  call_id: "CA...",
+  voice: "elevenlabs:newvoice",
+  language: "es"
+}));
+
+// List agents and calls
+ws.send(JSON.stringify({ action: "agents" }));
+ws.send(JSON.stringify({ action: "calls" }));
 ```
+
+**Commands Reference:**
+
+| Action | Payload | Response |
+|--------|---------|----------|
+| `dial` | `agent_id`, `to`, `from`, `greeting?` | `action.ok` + `call.started` event |
+| `hangup` | `call_id` | `action.ok` + `call.ended` event |
+| `configure` | `call_id`, `voice?`, `stt?`, `language?` | `action.ok` |
+| `agents` | — | `agents.list` with ids, channels, calls |
+| `calls` | — | `calls.list` with call details |
 
 #### CLI `--ws` Flag
 

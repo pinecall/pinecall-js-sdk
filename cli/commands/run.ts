@@ -208,6 +208,7 @@ async function runMultiple(
 
     // Load and start all agents
     let firstAgent: any = null;
+    const agentsMap = new Map<string, any>();
 
     for (const file of files) {
         const { AgentClass, name } = await loadAgentClass(file);
@@ -224,6 +225,7 @@ async function runMultiple(
 
         if (eventServer) eventServer.attach(agent.core);
         if (!firstAgent) firstAgent = agent;
+        agentsMap.set(name, agent.core);
 
         // Log agent info
         const phone = agent.phone?.number ?? agent.channels?.[0]?.number ?? "—";
@@ -237,9 +239,9 @@ async function runMultiple(
     writeln(`  ${MUTED("─".repeat(Math.min(process.stdout.columns || 80, 60)))}`);
     writeln("");
 
-    // Input — binds to the first agent for commands
+    // Input — binds to the first agent for commands, all agents available for /dial
     if (firstAgent) {
-        startInput({ agent: firstAgent.core, pc: firstAgent.pinecall });
+        startInput({ agent: firstAgent.core, pc: firstAgent.pinecall, agents: agentsMap });
         ensureCursor();
     }
 }

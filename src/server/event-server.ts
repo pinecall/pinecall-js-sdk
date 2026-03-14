@@ -101,6 +101,16 @@ export class EventServer {
                 agents: [...this._agents].map(a => a.id),
                 port: this._port,
             }));
+
+            // Bidirectional: handle commands from UI
+            ws.on("message", (raw: Buffer | string) => {
+                try {
+                    const msg = JSON.parse(raw.toString());
+                    this._handleCommand(msg, ws);
+                } catch {
+                    ws.send(JSON.stringify({ event: "error", message: "Invalid JSON" }));
+                }
+            });
         });
     }
 
@@ -202,5 +212,113 @@ export class EventServer {
             result[key] = value;
         }
         return result;
+    }
+
+    // ── Bidirectional commands ────────────────────────────────────────────
+
+    private _findAgent(agentId: string): Agent | undefined {
+        for (const agent of this._agents) {
+            if (agent.id === agentId) return agent;
+        }
+        // Fuzzy: prefix match
+        const lower = agentId.toLowerCase();
+        for (const agent of this._agents) {
+            if (agent.id.toLowerCase().startsWith(lower)) return agent;
+        }
+        return undefined;
+    }
+
+    private _findCall(callId: string): { agent: Agent; call: Call } | undefined {
+        for (const agent of this._agents) {
+            for (const [id, call] of agent.calls) {
+                if (id === callId || id.startsWith(callId)) {
+                    return { agent, call };
+                }
+            }
+        }
+        return undefined;
+    }
+
+    private _handleCommand(msg: any, ws: WebSocket): void {
+        const reply = (data: Record<string, unknown>) => {
+            ws.send(JSON.stringify(data));
+        };
+
+        switch (msg.action) {
+            case "dial": {
+                const agent = this._findAgent(msg.agent_id);
+                if (!agent) {
+                    reply({ event: "error", action: "dial", message: `Agent not found: ${msg.agent_id}` });
+                    return;
+                }
+                if (!msg.to || !msg.from) {
+                    reply({ event: "error", action: "dial", message: "Missing 'to' or 'from'" });
+                    return;
+                }
+                agent.dial({
+                    to: msg.to,
+                    from: msg.from,
+                    greeting: msg.greeting,
+                    metadata: msg.metadata,
+                });
+                reply({ event: "action.ok", action: "dial", agent_id: agent.id, to: msg.to });
+                break;
+            }
+
+            case "hangup": {
+                const found = this._findCall(msg.call_id);
+                if (!found) {
+                    reply({ event: "error", action: "hangup", message: `Call not found: ${msg.call_id}` });
+                    return;
+                }
+                found.call.hangup();
+                reply({ event: "action.ok", action: "hangup", call_id: found.call.id });
+                break;
+            }
+
+            case "configure": {
+                const found = this._findCall(msg.call_id);
+                if (!found) {
+                    reply({ event: "error", action: "configure", message: `Call not found: ${msg.call_id}` });
+                    return;
+                }
+                const { call_id: _, action: __, ...config } = msg;
+                found.call.configure(config);
+                reply({ event: "action.ok", action: "configure", call_id: found.call.id });
+                break;
+            }
+
+            case "agents": {
+                reply({
+                    event: "agents.list",
+                    agents: [...this._agents].map(a => ({
+                        id: a.id,
+                        channels: [...((a as any)._channels || new Map())].map(([ref]: [string]) => ref),
+                        calls: [...a.calls.keys()],
+                    })),
+                });
+                break;
+            }
+
+            case "calls": {
+                const calls: any[] = [];
+                for (const agent of this._agents) {
+                    for (const [id, call] of agent.calls) {
+                        calls.push({
+                            call_id: id,
+                            agent_id: agent.id,
+                            from: call.from,
+                            to: call.to,
+                            direction: call.direction,
+                        });
+                    }
+                }
+                reply({ event: "calls.list", calls });
+                break;
+            }
+
+            default:
+                reply({ event: "error", message: `Unknown action: ${msg.action}` });
+        }
     }
 }
