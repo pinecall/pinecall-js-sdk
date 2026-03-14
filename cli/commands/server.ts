@@ -107,7 +107,7 @@ export async function server(argv: string[]): Promise<void> {
         });
 
         await agent.start();
-        if (!pc) pc = agent.pc;  // grab Pinecall client from first agent
+        if (!pc) pc = agent.pinecall;  // grab Pinecall client from first agent
         agents.push({ agent, name });
     }
 
