@@ -114,7 +114,6 @@ export async function run(argv: string[]): Promise<void> {
     startInput({
         agent: agent.core,
         pc: agent.pinecall,
-        getHistory: (callId: string) => agent.getHistory(callId)?.toMessages(),
     });
     ensureCursor();
 

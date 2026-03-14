@@ -22,8 +22,9 @@ import { MUTED, DIM } from "./theme.js";
 // ── Available commands for tab completion ────────────────────────────────
 
 const COMMAND_LIST = [
-    "/help", "/hangup", "/hold", "/unhold",
-    "/mute", "/unmute", "/calls", "/history",
+    "/help", "/calls", "/switch", "/config",
+    "/hangup", "/hold", "/unhold",
+    "/mute", "/unmute", "/history",
 ];
 
 // ── Prompt appearance ────────────────────────────────────────────────────

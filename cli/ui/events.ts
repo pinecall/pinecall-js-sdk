@@ -64,22 +64,75 @@ function ensureStreamPrefix(): void {
     }
 }
 
-// ── Per-call state ───────────────────────────────────────────────────────
+// ── Call registry (shared with commands) ─────────────────────────────────
 
-interface CallState {
+interface CallEntry {
+    call: Call;
+    index: number;
     startTime: number;
     speakingStart: number | null;
 }
 
-const callStates = new Map<string, CallState>();
+let _nextIndex = 1;
+const _calls = new Map<string, CallEntry>();
+let _selectedCallId: string | null = null;
 
-function getState(call: Call): CallState {
-    let state = callStates.get(call.id);
-    if (!state) {
-        state = { startTime: Date.now(), speakingStart: null };
-        callStates.set(call.id, state);
+function getEntry(call: Call): CallEntry {
+    let entry = _calls.get(call.id);
+    if (!entry) {
+        entry = { call, index: _nextIndex++, startTime: Date.now(), speakingStart: null };
+        _calls.set(call.id, entry);
+        if (_calls.size === 1) _selectedCallId = call.id;
     }
-    return state;
+    return entry;
+}
+
+function removeCall(callId: string): void {
+    _calls.delete(callId);
+    if (_selectedCallId === callId) {
+        const remaining = [..._calls.values()][0];
+        _selectedCallId = remaining ? remaining.call.id : null;
+    }
+}
+
+/** Call label prefix — only shown when >1 call active. */
+function callPrefix(call: Call): string {
+    if (_calls.size <= 1) return "";
+    const entry = _calls.get(call.id);
+    if (!entry) return "";
+    const sel = call.id === _selectedCallId ? chalk.hex("#c084fc")("▸") : " ";
+    return `${sel}${DIM(`[${entry.index}]`)} `;
+}
+
+// ── Exported for command access ──
+
+export function getActiveCalls(): ReadonlyMap<string, CallEntry> { return _calls; }
+
+export function getSelectedCall(): Call | null {
+    if (!_selectedCallId) return null;
+    return _calls.get(_selectedCallId)?.call ?? null;
+}
+
+export function selectCall(indexOrSid: string): Call | null {
+    const num = parseInt(indexOrSid, 10);
+    if (!isNaN(num)) {
+        for (const entry of _calls.values()) {
+            if (entry.index === num) { _selectedCallId = entry.call.id; return entry.call; }
+        }
+    }
+    const lower = indexOrSid.toLowerCase();
+    for (const entry of _calls.values()) {
+        if (entry.call.id.toLowerCase().startsWith(lower)) {
+            _selectedCallId = entry.call.id;
+            return entry.call;
+        }
+    }
+    return null;
+}
+
+export function getCallLabel(call: Call): string {
+    const entry = _calls.get(call.id);
+    return entry ? `[${entry.index}]` : "";
 }
 
 // ── Attach core events ───────────────────────────────────────────────────
@@ -90,25 +143,25 @@ export function attachEvents(
 ): void {
     // ── Call lifecycle ──
     agent.on("call.started", (call: Call) => {
-        getState(call);
+        const entry = getEntry(call);
         const dir = call.direction === "inbound" ? "incoming" : "outgoing";
         const from = call.direction === "inbound" ? call.from : call.to;
         breakStream();
         write("\n");
-        labeledSep("call.started");
-        logLine(`${ts()} ${DIM(dir)} ${ACCENT(from)}`);
+        labeledSep(`call.started ${DIM(`[${entry.index}]`)}`);
+        logLine(`${callPrefix(call)}${ts()} ${DIM(dir)} ${ACCENT(from)}`);
         write("\n");
     });
 
     agent.on("call.ended", (call: Call, reason: string) => {
         breakStream();
-        const state = callStates.get(call.id);
-        const elapsed = state ? ((Date.now() - state.startTime) / 1000).toFixed(1) + "s" : "";
+        const entry = _calls.get(call.id);
+        const elapsed = entry ? ((Date.now() - entry.startTime) / 1000).toFixed(1) + "s" : "";
         write("\n");
-        labeledSep("call.ended");
-        logLine(`${ts()} ${MUTED(reason)} ${DIM("·")} ${DIM(elapsed)}`);
+        labeledSep(`call.ended ${getCallLabel(call)}`);
+        logLine(`${callPrefix(call)}${ts()} ${MUTED(reason)} ${DIM("·")} ${DIM(elapsed)}`);
         write("\n");
-        callStates.delete(call.id);
+        removeCall(call.id);
     });
 
     // ── Channel events ──
@@ -118,24 +171,24 @@ export function attachEvents(
 
     // ── Speech events (silent — just track state) ──
     agent.on("speech.started", (_e: any, call: Call) => {
-        const state = getState(call);
-        state.speakingStart = Date.now();
+        const entry = getEntry(call);
+        entry.speakingStart = Date.now();
     });
 
     agent.on("speech.ended", (_e: any, call: Call) => {
-        const state = getState(call);
-        if (state.speakingStart) state.speakingStart = null;
+        const entry = getEntry(call);
+        if (entry.speakingStart) entry.speakingStart = null;
     });
 
     // ── Transcript events ──
     agent.on("user.speaking", (e: any, _call: Call) => {
         if (_llmStreaming) return;
-        writeInline(`  ${BAR} ${ts()} ${DIM("…")} ${MUTED(e.text)}`);
+        writeInline(`  ${BAR} ${callPrefix(_call)}${ts()} ${DIM("…")} ${MUTED(e.text)}`);
     });
 
     agent.on("user.message", (e: any, _call: Call) => {
         breakStream();
-        writeInline(`  ${BAR} ${ts()} 🎙️  ${chalk.white.bold(e.text)}\n`);
+        writeInline(`  ${BAR} ${callPrefix(_call)}${ts()} 🎙️  ${chalk.white.bold(e.text)}\n`);
         write("\n");
     });
 
@@ -153,12 +206,12 @@ export function attachEvents(
     agent.on("turn.end", (_turn: Turn, _call: Call) => {
         breakStream();
         const prob = _turn.probability ?? 0;
-        logLine(`${ts()} ${OK("⏹ turn.end")} ${DIM(`p=${prob.toFixed(2)}`)} ${dur(_turn.latencyMs)}`);
+        logLine(`${callPrefix(_call)}${ts()} ${OK("⏹ turn.end")} ${DIM(`p=${prob.toFixed(2)}`)} ${dur(_turn.latencyMs)}`);
     });
 
-    agent.on("turn.continued", () => {
+    agent.on("turn.continued", (_e: any, _call: Call) => {
         breakStream();
-        logLine(`${ts()} ${WARN("⚠ turn.continued")} ${DIM("user kept speaking")}`);
+        logLine(`${callPrefix(_call)}${ts()} ${WARN("⚠ turn.continued")} ${DIM("user kept speaking")}`);
     });
 
     agent.on("turn.resumed", () => {
