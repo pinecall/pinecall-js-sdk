@@ -235,6 +235,14 @@ export class EventServer {
             }
         });
 
+        this._http.on("error", (err: NodeJS.ErrnoException) => {
+            if (err.code === "EADDRINUSE") {
+                console.error(`⚠ REST API port ${this._apiPort} already in use — API not started`);
+            } else {
+                console.error(`⚠ REST API error: ${err.message}`);
+            }
+        });
+
         this._http.listen(this._apiPort, this._host);
     }
 
