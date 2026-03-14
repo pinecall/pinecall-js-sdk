@@ -739,78 +739,72 @@ ws.send(JSON.stringify({ action: "calls" }));
 | `agents` | — | `agents.list` with ids, channels, calls |
 | `calls` | — | `calls.list` with call details |
 
-#### CLI `--ws` Flag
+#### `pinecall run` vs `pinecall server`
 
-Start the EventServer from the CLI without changing code:
+| | `pinecall run` | `pinecall server` |
+|---|---|---|
+| **Purpose** | Dev & debugging | Production |
+| **UI** | Interactive TUI with `/commands` | Headless (no readline) |
+| **Events** | Console log with colors | WS broadcast + REST API |
+| **Multi-agent** | All events in one TUI | Each agent gets a token |
 
 ```bash
-# Start agent with WS event bridge on default port 4100
-pinecall run Receptionist --ws
+# Dev mode — interactive TUI
+pinecall run Agent.js
+pinecall run ./agents
 
-# Custom port
-pinecall run Receptionist --ws --ws-port=8080
+# Server mode — headless with REST + WS
+pinecall server Agent.js
+pinecall server ./agents
+pinecall server ./agents --port=4100 --api-port=3000 --host=0.0.0.0
 ```
 
-#### Vapi-Mode: Full Server Example
+#### REST API (built-in)
 
-Build your own Vapi with dynamic agents, database persistence, EventServer, and a dashboard UI:
+When using `pinecall server` or `EventServer({ apiPort })`, these endpoints are available:
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/agents` | List all agents |
+| `POST` | `/agents` | Deploy new agent `{ name, voice?, stt?, ... }` |
+| `PATCH` | `/agents/:name` | Configure agent `{ voice?, stt?, ... }` |
+| `DELETE` | `/agents/:name` | Remove agent |
+| `POST` | `/agents/:name/dial` | Outbound call `{ to, from, greeting? }` |
+| `GET` | `/calls` | List active calls |
+| `PATCH` | `/calls/:id` | Configure call `{ voice?, language? }` |
+| `POST` | `/calls/:id/hangup` | Hang up call |
+
+#### Vapi-Mode: Custom Server
+
+For full control, use the SDK directly with your own Express server:
 
 ```typescript
-import express from "express";
 import { Pinecall } from "@pinecall/sdk";
 import { EventServer } from "@pinecall/sdk/server";
-import db from "./db.js"; // your database
+import db from "./db.js";
 
-const app = express();
-app.use(express.json());
-
-// ── Pinecall SDK ──
 const pc = new Pinecall({ apiKey: process.env.PINECALL_API_KEY });
 await pc.connect();
 
-// ── EventServer: expose events to your dashboard UI ──
-const eventServer = new EventServer({ port: 4100 });
+// EventServer with REST API built-in
+const eventServer = new EventServer({
+  port: 4100,
+  apiPort: 3000,
+  host: "0.0.0.0",
+  requireAuth: true,
+  pinecall: pc,           // enables POST /agents to deploy agents
+});
 
-// ── Load agents from database on startup ──
-const configs = await db.agents.findAll();
-for (const config of configs) {
-  const agent = pc.deploy(config.name, config);
-  eventServer.attach(agent);  // forward events to dashboard
+// Load agents from DB
+for (const config of await db.agents.findAll()) {
+  const agent = pc.agent(config.name, config);
+  if (config.phone) agent.addChannel("phone", config.phone);
+  const token = eventServer.attach(agent);
+  console.log(`${config.name}: ${token}`);
 }
+
 eventServer.start();
-
-// ── REST API for your dashboard ──
-
-// Create agent
-app.post("/api/agents", async (req, res) => {
-  const config = req.body;
-  await db.agents.create(config);
-  const agent = pc.deploy(config.name, config);
-  eventServer.attach(agent);
-  res.json({ ok: true, name: config.name });
-});
-
-// Update agent live (hot-reload)
-app.patch("/api/agents/:name", async (req, res) => {
-  await db.agents.update(req.params.name, req.body);
-  pc.agents.get(req.params.name)?.configure(req.body);
-  res.json({ ok: true });
-});
-
-// Delete agent
-app.delete("/api/agents/:name", async (req, res) => {
-  const agent = pc.agents.get(req.params.name);
-  if (agent) {
-    for (const [ref] of agent._channels) agent.removeChannel(ref);
-    eventServer.detach(agent);
-  }
-  await db.agents.delete(req.params.name);
-  res.json({ ok: true });
-});
-
-app.listen(3000);
-// Dashboard connects to ws://localhost:4100 for live events
-// REST API at http://localhost:3000/api/agents
+// REST at http://0.0.0.0:3000 — WS at ws://0.0.0.0:4100
 ```
 
 ---

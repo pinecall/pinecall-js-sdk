@@ -15,28 +15,29 @@
 
 import { WebSocketServer, WebSocket } from "ws";
 import { randomBytes } from "node:crypto";
-import type { IncomingMessage } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { Agent } from "../agent.js";
 import type { Call } from "../call.js";
+import type { Pinecall } from "../client.js";
 
 // ── Types ────────────────────────────────────────────────────────────────
 
 export interface EventServerOptions {
-    /** Port to listen on. Default: 4100 */
+    /** Port to listen on for WebSocket. Default: 4100 */
     port?: number;
+    /** Port for REST API. When set, starts an HTTP server with agent/call endpoints. */
+    apiPort?: number;
     /** Host to bind to. Default: "127.0.0.1" (localhost only) */
     host?: string;
     /**
      * Require token auth for WS connections. Default: false.
      * When true, clients must pass `Authorization: Bearer <token>` header.
-     * Tokens are returned by `attach()`.
      */
     requireAuth?: boolean;
-    /**
-     * Allowed origins for WebSocket connections.
-     * When set, rejects connections from origins not in this list.
-     */
+    /** Allowed origins for WebSocket connections. */
     allowedOrigins?: string[];
+    /** Pinecall client instance (needed for REST API deploy/manage). */
+    pinecall?: Pinecall;
 }
 
 // ── Events we forward ─────────────────────────────────────────────────────
@@ -74,20 +75,24 @@ interface AuthedSocket extends WebSocket {
 
 export class EventServer {
     private _wss: WebSocketServer | null = null;
+    private _http: ReturnType<typeof createServer> | null = null;
     private _port: number;
+    private _apiPort: number | null;
     private _host: string;
     private _agents: Set<Agent> = new Set();
     private _allowedOrigins: string[] | null;
     private _requireAuth: boolean;
     private _tokens: TokenStore = new Map();
-    /** Reverse: agent id → token */
     private _agentTokens: Map<string, string> = new Map();
+    private _pc: Pinecall | null;
 
     constructor(opts: EventServerOptions = {}) {
         this._port = opts.port ?? 4100;
+        this._apiPort = opts.apiPort ?? null;
         this._host = opts.host ?? "127.0.0.1";
         this._allowedOrigins = opts.allowedOrigins ?? null;
         this._requireAuth = opts.requireAuth ?? false;
+        this._pc = opts.pinecall ?? null;
     }
 
     /** Number of connected WebSocket clients. */
@@ -163,13 +168,202 @@ export class EventServer {
                 }
             });
         });
+
+        // Start REST API if apiPort is set
+        this._startApi();
     }
 
-    /** Stop the WebSocket server. */
+    /** Stop the WebSocket and HTTP servers. */
     stop(): void {
-        if (!this._wss) return;
-        this._wss.close();
-        this._wss = null;
+        if (this._wss) { this._wss.close(); this._wss = null; }
+        if (this._http) { this._http.close(); this._http = null; }
+    }
+
+    /** REST API port (for external logging). */
+    get apiPort(): number | null {
+        return this._apiPort;
+    }
+
+    /** WS port. */
+    get wsPort(): number {
+        return this._port;
+    }
+
+    // ── REST API ─────────────────────────────────────────────────────────
+
+    private _startApi(): void {
+        if (!this._apiPort) return;
+
+        this._http = createServer((req, res) => {
+            // CORS
+            const origin = req.headers.origin ?? "*";
+            if (this._allowedOrigins && !this._allowedOrigins.includes(origin)) {
+                res.writeHead(403); res.end("Forbidden"); return;
+            }
+            res.setHeader("Access-Control-Allow-Origin", this._allowedOrigins ? origin : "*");
+            res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
+            res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+
+            if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
+
+            // Auth check
+            if (this._requireAuth) {
+                const auth = req.headers["authorization"];
+                if (!auth?.startsWith("Bearer ") || !this._tokens.has(auth.slice(7))) {
+                    this._json(res, 401, { error: "Unauthorized" }); return;
+                }
+            }
+
+            // Parse body for POST/PATCH
+            if (req.method === "POST" || req.method === "PATCH") {
+                let body = "";
+                req.on("data", (chunk: Buffer) => { body += chunk.toString(); });
+                req.on("end", () => {
+                    try {
+                        const data = body ? JSON.parse(body) : {};
+                        this._handleApi(req, res, data);
+                    } catch {
+                        this._json(res, 400, { error: "Invalid JSON" });
+                    }
+                });
+            } else {
+                this._handleApi(req, res, {});
+            }
+        });
+
+        this._http.listen(this._apiPort, this._host);
+    }
+
+    private _handleApi(req: IncomingMessage, res: ServerResponse, body: any): void {
+        const url = req.url ?? "/";
+        const method = req.method ?? "GET";
+
+        // GET /agents — list agents
+        if (method === "GET" && url === "/agents") {
+            const agents = [...this._agents].map(a => ({
+                id: a.id,
+                channels: [...((a as any)._channels || new Map())].map(([ref]: [string]) => ref),
+                calls: [...a.calls.keys()],
+                token: this._agentTokens.get(a.id),
+            }));
+            this._json(res, 200, { agents });
+            return;
+        }
+
+        // GET /calls — list all calls
+        if (method === "GET" && url === "/calls") {
+            const calls: any[] = [];
+            for (const agent of this._agents) {
+                for (const [id, call] of agent.calls) {
+                    calls.push({
+                        call_id: id,
+                        agent_id: agent.id,
+                        from: call.from,
+                        to: call.to,
+                        direction: call.direction,
+                    });
+                }
+            }
+            this._json(res, 200, { calls });
+            return;
+        }
+
+        // POST /agents — deploy a new agent
+        if (method === "POST" && url === "/agents") {
+            if (!this._pc) {
+                this._json(res, 500, { error: "No Pinecall client configured" });
+                return;
+            }
+            const { name, ...config } = body;
+            if (!name) {
+                this._json(res, 400, { error: "Missing 'name' field" });
+                return;
+            }
+            const agent = this._pc.agent(name, config);
+            if (config.phone) agent.addChannel("phone", config.phone, config);
+            const token = this.attach(agent);
+            this._json(res, 201, { ok: true, name, token });
+            return;
+        }
+
+        // PATCH /agents/:name — configure agent
+        const patchMatch = url.match(/^\/agents\/([^/]+)$/);
+        if (method === "PATCH" && patchMatch) {
+            const name = decodeURIComponent(patchMatch[1]);
+            const agent = this._findAgent(name);
+            if (!agent) {
+                this._json(res, 404, { error: `Agent not found: ${name}` });
+                return;
+            }
+            agent.configure(body);
+            this._json(res, 200, { ok: true, agent_id: agent.id });
+            return;
+        }
+
+        // DELETE /agents/:name — detach agent
+        const deleteMatch = url.match(/^\/agents\/([^/]+)$/);
+        if (method === "DELETE" && deleteMatch) {
+            const name = decodeURIComponent(deleteMatch[1]);
+            const agent = this._findAgent(name);
+            if (!agent) {
+                this._json(res, 404, { error: `Agent not found: ${name}` });
+                return;
+            }
+            this.detach(agent);
+            this._json(res, 200, { ok: true, agent_id: agent.id });
+            return;
+        }
+
+        // POST /agents/:name/dial — dial from agent
+        const dialMatch = url.match(/^\/agents\/([^/]+)\/dial$/);
+        if (method === "POST" && dialMatch) {
+            const name = decodeURIComponent(dialMatch[1]);
+            const agent = this._findAgent(name);
+            if (!agent) {
+                this._json(res, 404, { error: `Agent not found: ${name}` });
+                return;
+            }
+            if (!body.to || !body.from) {
+                this._json(res, 400, { error: "Missing 'to' or 'from'" });
+                return;
+            }
+            agent.dial({ to: body.to, from: body.from, greeting: body.greeting, metadata: body.metadata });
+            this._json(res, 200, { ok: true, agent_id: agent.id, to: body.to });
+            return;
+        }
+
+        // POST /calls/:id/hangup
+        const hangupMatch = url.match(/^\/calls\/([^/]+)\/hangup$/);
+        if (method === "POST" && hangupMatch) {
+            const found = this._findCall(decodeURIComponent(hangupMatch[1]));
+            if (!found) {
+                this._json(res, 404, { error: "Call not found" });
+                return;
+            }
+            found.call.hangup();
+            this._json(res, 200, { ok: true, call_id: found.call.id });
+            return;
+        }
+
+        // PATCH /calls/:id — configure call
+        const callPatchMatch = url.match(/^\/calls\/([^/]+)$/);
+        if (method === "PATCH" && callPatchMatch) {
+            const found = this._findCall(decodeURIComponent(callPatchMatch[1]));
+            if (!found) {
+                this._json(res, 404, { error: "Call not found" });
+                return;
+            }
+            found.call.configure(body);
+            this._json(res, 200, { ok: true, call_id: found.call.id });
+            return;
+        }
+
+        this._json(res, 404, { error: "Not found" });
+    }
+
+    private _json(res: ServerResponse, status: number, data: any): void {
+        res.writeHead(status, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(data));
     }
 
     /**

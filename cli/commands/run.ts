@@ -99,13 +99,14 @@ async function loadAgentClass(fullPath: string): Promise<{ AgentClass: any; name
 export async function run(argv: string[]): Promise<void> {
     const args = parseArgs(argv, {
         positional: "file",
-        flags: ["--ws"],
-        values: ["--phone", "--dial", "--ws-port"],
+        flags: [],
+        values: ["--phone", "--dial"],
     });
 
     const input = args.positional;
     if (!input) {
-        throw new CliError("Usage: pinecall run <AgentName|folder>");
+        throw new CliError("Usage: pinecall run <AgentName|folder>\n" +
+            "  For server mode (REST + WS): pinecall server <AgentName|folder>");
     }
 
     const env = resolveEnv();
@@ -162,16 +163,6 @@ async function runSingle(
     attachEvents(agent.core);
     attachLLMEvents(agent.core);
 
-    // WS event server (opt-in)
-    if (args.flags.has("--ws")) {
-        const wsPort = parseInt(args.values.get("--ws-port") ?? "4100", 10);
-        const { EventServer } = await import("@pinecall/sdk/server");
-        const eventServer = new EventServer({ port: wsPort });
-        eventServer.attach(agent.core);
-        eventServer.start();
-        logLine(`${ACCENT("WS")}    ws://127.0.0.1:${wsPort}`);
-    }
-
     startInput({ agent: agent.core, pc: agent.pinecall });
     ensureCursor();
 
@@ -196,16 +187,6 @@ async function runMultiple(
 
     printHeader(`${files.length} agents`);
 
-    // Optional WS event server
-    let eventServer: any = null;
-    if (args.flags.has("--ws")) {
-        const wsPort = parseInt(args.values.get("--ws-port") ?? "4100", 10);
-        const { EventServer } = await import("@pinecall/sdk/server");
-        eventServer = new EventServer({ port: wsPort });
-        eventServer.start();
-        logLine(`${ACCENT("WS")}    ws://127.0.0.1:${wsPort}`);
-    }
-
     // Load and start all agents
     let firstAgent: any = null;
     const agentsMap = new Map<string, any>();
@@ -223,7 +204,6 @@ async function runMultiple(
         attachEvents(agent.core);
         attachLLMEvents(agent.core);
 
-        if (eventServer) eventServer.attach(agent.core);
         if (!firstAgent) firstAgent = agent;
         agentsMap.set(name, agent.core);
 

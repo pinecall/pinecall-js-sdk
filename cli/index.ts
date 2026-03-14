@@ -16,6 +16,8 @@ const HELP = `
   ${chalk.bold("Commands:")}
     agent               Start an inbound voice agent
     dial <number>       Make an outbound call
+    run <agent>         Run an agent file (dev mode with TUI)
+    server <agent|dir>  Start headless server (REST + WS)
     test                Run a connectivity smoke test
     voices              List available TTS voices
     phones              List phone numbers on your account
@@ -34,13 +36,12 @@ const HELP = `
 
   ${chalk.bold("Examples:")}
     ${chalk.dim("$")} pinecall agent
-    ${chalk.dim("$")} pinecall agent --es
     ${chalk.dim("$")} pinecall dial +12025551234
-    ${chalk.dim("$")} pinecall dial +12025551234 --from=+19035551111
-    ${chalk.dim("$")} pinecall voices --provider=cartesia
-    ${chalk.dim("$")} pinecall phones
+    ${chalk.dim("$")} pinecall run Agent.js
+    ${chalk.dim("$")} pinecall run ./agents
+    ${chalk.dim("$")} pinecall server Agent.js --api-port=3000
+    ${chalk.dim("$")} pinecall server ./agents
     ${chalk.dim("$")} pinecall test
-    ${chalk.dim("$")} pinecall run agent.js --phone +13186330963
 `;
 
 async function main(): Promise<void> {
@@ -65,6 +66,9 @@ async function main(): Promise<void> {
 
         case "run":
             return (await import("./commands/run.js")).run(argv);
+
+        case "server":
+            return (await import("./commands/server.js")).server(argv);
 
         case "help":
         case "--help":
