@@ -27,6 +27,12 @@ export interface EventServerOptions {
     port?: number;
     /** Host to bind to. Default: "127.0.0.1" (localhost only) */
     host?: string;
+    /**
+     * Allowed origins for WebSocket connections.
+     * When set, rejects connections from origins not in this list.
+     * Example: ["https://dashboard.myapp.com", "http://localhost:3000"]
+     */
+    allowedOrigins?: string[];
 }
 
 // ── Events we forward ─────────────────────────────────────────────────────
@@ -57,10 +63,12 @@ export class EventServer {
     private _port: number;
     private _host: string;
     private _agents: Set<Agent> = new Set();
+    private _allowedOrigins: string[] | null;
 
     constructor(opts: EventServerOptions = {}) {
         this._port = opts.port ?? 4100;
         this._host = opts.host ?? "127.0.0.1";
+        this._allowedOrigins = opts.allowedOrigins ?? null;
     }
 
     /** Number of connected WebSocket clients. */
@@ -80,10 +88,14 @@ export class EventServer {
         this._wss = new WebSocketServer({
             port: this._port,
             host: this._host,
+            verifyClient: this._allowedOrigins
+                ? (info: { origin: string }) => {
+                    return this._allowedOrigins!.includes(info.origin);
+                }
+                : undefined,
         });
 
         this._wss.on("connection", (ws: WebSocket) => {
-            // Send current state snapshot
             ws.send(JSON.stringify({
                 event: "server.connected",
                 agents: [...this._agents].map(a => a.id),

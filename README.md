@@ -615,13 +615,45 @@ Any WebSocket client connects to `ws://localhost:4100` and receives JSON events:
 
 | Method | Description |
 |--------|-------------|
-| `new EventServer({ port?, host? })` | Create server (default: `127.0.0.1:4100`) |
+| `new EventServer({ port?, host?, allowedOrigins? })` | Create server (default: `127.0.0.1:4100`) |
 | `server.attach(agent)` | Subscribe to agent events |
 | `server.detach(agent)` | Unsubscribe |
 | `server.start()` | Start listening |
 | `server.stop()` | Stop server |
 | `server.clients` | Number of connected WS clients |
 | `server.listening` | Whether server is running |
+
+#### Production Security
+
+By default the EventServer binds to `127.0.0.1` (localhost only). For production, use `allowedOrigins` to restrict which domains can connect:
+
+```typescript
+const eventServer = new EventServer({
+  port: 4100,
+  host: "0.0.0.0",                // expose to network
+  allowedOrigins: [
+    "https://dashboard.myapp.com", // your dashboard domain
+    "http://localhost:3000",        // local dev
+  ],
+});
+```
+
+Connections from unlisted origins are rejected at the WebSocket handshake.
+
+> **Recommended architecture:** Run the EventServer in the same process as your Express/Fastify backend. Your backend handles auth (JWT, sessions) for the dashboard, and the EventServer runs as an internal sidecar — never exposed directly to the internet.
+
+```
+┌─────────────────────────────────────────────┐
+│              Your Server (Node.js)          │
+│                                              │
+│  Express :3000 ──── REST API (auth, CRUD)   │
+│  EventServer :4100 ── WS events (origins)   │
+│  Pinecall SDK ────── voice agent runtime    │
+└─────────────────────────────────────────────┘
+         ↑                    ↑
+    Dashboard UI         Pinecall Cloud
+  (your domain)        (voice infra)
+```
 
 #### React Dashboard Example
 
