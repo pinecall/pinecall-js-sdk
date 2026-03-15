@@ -497,6 +497,25 @@ class MyBot extends GPTAgent {
 
 `onCallStarted` is the recommended hook for all per-call customization: prompt, greeting, history injection, and metadata.
 
+#### Auto-Load Prompts
+
+Prompts are automatically loaded from `prompts/{className}.txt` by convention:
+
+```
+prompts/
+  receptionist.txt   ← class Receptionist extends GPTAgent
+  sales.txt          ← class Sales extends GPTAgent
+```
+
+```typescript
+class Receptionist extends GPTAgent {
+  model = "gpt-4.1-nano";
+  // no prompt needed — auto-loaded from prompts/receptionist.txt
+}
+```
+
+Priority: `prompts/{className}.txt` → `prompt` field → default prompt.
+
 ---
 
 ### Server-Side LLM

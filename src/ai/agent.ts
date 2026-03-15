@@ -124,7 +124,20 @@ export class Agent {
         const useServerLLM = this._serverSideLLM || !!this.model;
         if (useServerLLM && this.model) {
             cfg.llm = this.model;
-            if (this.prompt) (cfg as any).instructions = this.prompt;
+
+            // Auto-load prompt: prompts/{className}.txt → falls back to this.prompt
+            let promptText = this.prompt;
+            try {
+                const fs = require("fs");
+                const path = require("path");
+                const className = this.constructor.name.toLowerCase();
+                const promptPath = path.resolve("prompts", `${className}.txt`);
+                if (fs.existsSync(promptPath)) {
+                    promptText = fs.readFileSync(promptPath, "utf-8").trim();
+                }
+            } catch { /* no auto-load */ }
+
+            if (promptText) (cfg as any).instructions = promptText;
             const tools = this._getToolDefinitions();
             if (tools.length > 0) (cfg as any).tools = tools;
         }
