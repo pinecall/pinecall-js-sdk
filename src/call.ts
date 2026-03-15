@@ -329,15 +329,6 @@ export class Call extends TypedEmitter<CallEvents> {
         return res.count ?? 0;
     }
 
-    /**
-     * Load a prompt from a file and set it as the system prompt.
-     */
-    async setPromptFile(filePath: string): Promise<number> {
-        const fs = await import("fs");
-        const text = fs.readFileSync(filePath, "utf-8");
-        return this.setPrompt(text);
-    }
-
     /** @deprecated Use setPrompt() instead. */
     async setInstructions(instructions: string): Promise<number> {
         return this.setPrompt(instructions);

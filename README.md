@@ -363,7 +363,6 @@ class MyBot extends Agent {
 |----------|------|---------|-------------|
 | `model` | `string` | — | LLM model (e.g., `"gpt-4.1-nano"`) |
 | `prompt` | `string` | `"You are a helpful voice assistant."` | System prompt |
-| `promptFile` | `string` | — | Load system prompt from a file |
 | `greeting` | `string \| ((call) => string \| Promise<string>)` | — | Auto-spoken on call start. Supports async callbacks |
 | `voice` | `string \| object` | — | TTS voice (`"elevenlabs:id"` or config) |
 | `language` | `string` | — | Language code (`"en"`, `"es"`, `"fr"`, ...) |
@@ -536,7 +535,6 @@ class CustomBot extends Agent {
 |----------|------|---------|-------------|
 | `model` | `string` | — | LLM model name (e.g., `"gpt-4.1-nano"`, `"gpt-4o-mini"`) |
 | `prompt` | `string` | `"You are a helpful voice assistant."` | System prompt |
-| `promptFile` | `string` | — | Load prompt from file (e.g., `"./prompts/support.txt"`) |
 | `temperature` | `number` | — | Sampling temperature (0-2) |
 | `maxTokens` | `number` | — | Maximum response tokens |
 | `greeting` | `string \| ((call) => string \| Promise<string>)` | — | Auto-spoken on call start |
@@ -563,7 +561,6 @@ The server maintains conversation history per call. You can read, inject, clear,
 | `call.addHistory(messages)` | `Promise<number>` | Inject messages into history (e.g. CRM context) |
 | `call.clearHistory()` | `Promise<number>` | Clear history (system prompt preserved) |
 | `call.setPrompt(text)` | `Promise<number>` | Update system prompt mid-call |
-| `call.setPromptFile(path)` | `Promise<number>` | Load prompt from file and set it |
 
 **Examples:**
 

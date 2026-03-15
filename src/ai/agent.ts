@@ -68,8 +68,6 @@ export class Agent {
     maxTokens?: number;
     /** System prompt for server-side LLM. For dynamic per-call prompts, use call.setPrompt() in onCallStarted(). */
     prompt = "You are a helpful voice assistant. Be concise.";
-    /** Load system prompt from a file (alternative to prompt). */
-    promptFile?: string;
     /** Fallback greeting (channel greeting takes priority). String or async callback for dynamic greetings. */
     greeting?: string | ((call: Call) => string | Promise<string>);
     /** Which turn event to respond on. Default: "eager.turn". */
@@ -126,13 +124,7 @@ export class Agent {
         const useServerLLM = this._serverSideLLM || !!this.model;
         if (useServerLLM && this.model) {
             cfg.llm = this.model;
-            // promptFile takes precedence over prompt
-            let promptText = this.prompt;
-            if (this.promptFile) {
-                const fs = require("fs");
-                promptText = fs.readFileSync(this.promptFile, "utf-8");
-            }
-            if (promptText) (cfg as any).instructions = promptText;
+            if (this.prompt) (cfg as any).instructions = this.prompt;
             const tools = this._getToolDefinitions();
             if (tools.length > 0) (cfg as any).tools = tools;
         }
