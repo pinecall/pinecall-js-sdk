@@ -6,3 +6,5 @@ dist/
 .DS_Store
 coverage/
 .pinecode/
+examples/dashboard/node_modules
+examples/dashboard/dist
