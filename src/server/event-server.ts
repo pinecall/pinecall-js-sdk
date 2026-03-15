@@ -16,6 +16,9 @@
 import { WebSocketServer, WebSocket } from "ws";
 import { randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { join, extname } from "node:path";
+import { readFileSync, existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import type { Agent } from "../agent.js";
 import type { Call } from "../call.js";
 import type { Pinecall } from "../client.js";
@@ -36,6 +39,8 @@ export interface EventServerOptions {
     allowedOrigins?: string[];
     /** Pinecall client instance (needed for REST API deploy/manage). */
     pinecall?: Pinecall;
+    /** Serve the built-in dashboard UI. Default: true. */
+    ui?: boolean;
 }
 
 // ── Events we forward ─────────────────────────────────────────────────────
@@ -86,6 +91,23 @@ export class EventServer {
     private _tokens: TokenStore = new Map();
     private _agentTokens: Map<string, string> = new Map();
     private _pc: Pinecall | null;
+    private _ui: boolean;
+    private _dashboardDir: string;
+
+    // MIME type map for static serving
+    private static _mimeTypes: Record<string, string> = {
+        '.html': 'text/html',
+        '.js': 'application/javascript',
+        '.css': 'text/css',
+        '.json': 'application/json',
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.svg': 'image/svg+xml',
+        '.ico': 'image/x-icon',
+        '.woff': 'font/woff',
+        '.woff2': 'font/woff2',
+        '.ttf': 'font/ttf',
+    };
 
     constructor(opts: EventServerOptions = {}) {
         this._port = opts.port ?? 4100;
@@ -93,6 +115,14 @@ export class EventServer {
         this._allowedOrigins = opts.allowedOrigins ?? null;
         this._requireAuth = opts.requireAuth ?? false;
         this._pc = opts.pinecall ?? null;
+        this._ui = opts.ui ?? true;
+
+        // Resolve dashboard dir relative to compiled server code
+        // In dist/server/index.js → ../dashboard/
+        const thisDir = typeof __dirname !== 'undefined'
+            ? __dirname
+            : join(fileURLToPath(import.meta.url), '..');
+        this._dashboardDir = join(thisDir, '..', 'dashboard');
     }
 
     /** Number of connected WebSocket clients. */
@@ -387,12 +417,43 @@ export class EventServer {
             return;
         }
 
+        // No API route matched — try serving static dashboard files
+        if (this._ui) {
+            this._serveStatic(req, res);
+            return;
+        }
         this._json(res, 404, { error: "Not found" });
     }
 
     private _json(res: ServerResponse, status: number, data: any): void {
         res.writeHead(status, { "Content-Type": "application/json" });
         res.end(JSON.stringify(data));
+    }
+
+    /** Serve static files from the embedded dashboard build. */
+    private _serveStatic(req: IncomingMessage, res: ServerResponse): void {
+        const url = (req.url ?? "/").split("?")[0];
+        const safePath = url.replace(/\.\./g, "").replace(/\/+/g, "/");
+        let filePath = join(this._dashboardDir, safePath === "/" ? "index.html" : safePath);
+
+        // If file doesn't exist, try index.html (SPA routing)
+        if (!existsSync(filePath)) {
+            filePath = join(this._dashboardDir, "index.html");
+            if (!existsSync(filePath)) {
+                this._json(res, 404, { error: "Dashboard not found. Run `npm run build:dashboard` first." });
+                return;
+            }
+        }
+
+        try {
+            const content = readFileSync(filePath);
+            const ext = extname(filePath).toLowerCase();
+            const mime = EventServer._mimeTypes[ext] || "application/octet-stream";
+            res.writeHead(200, { "Content-Type": mime, "Cache-Control": ext === ".html" ? "no-cache" : "public, max-age=31536000, immutable" });
+            res.end(content);
+        } catch {
+            this._json(res, 500, { error: "Failed to read file" });
+        }
     }
 
     /**

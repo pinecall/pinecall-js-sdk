@@ -45,7 +45,9 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && npm run build:dashboard",
+    "build:sdk": "tsup",
+    "build:dashboard": "cd examples/dashboard && npm run build && rm -rf ../../dist/dashboard && cp -r dist ../../dist/dashboard",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

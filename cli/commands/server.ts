@@ -34,6 +34,8 @@ interface AgentConfig {
 interface ServerConfig {
     port?: number;
     host?: string;
+    ui?: boolean;
+    agentsDir?: string;
     agents: AgentConfig[];
 }
 
@@ -159,7 +161,7 @@ async function deployConfigAgent(
 export async function server(argv: string[]): Promise<void> {
     const args = parseArgs(argv, {
         positional: "file",
-        flags: [],
+        flags: ["--disable-ui"],
         values: ["--port", "--host", "--config"],
     });
 
@@ -186,6 +188,8 @@ export async function server(argv: string[]): Promise<void> {
 
     const port = parseInt(args.values.get("--port") ?? String(configMode?.config.port ?? 4100), 10);
     const host = args.values.get("--host") ?? configMode?.config.host ?? "0.0.0.0";
+    const disableUi = args.flags.has("--disable-ui");
+    const ui = disableUi ? false : (configMode?.config.ui ?? true);
 
     // ── Banner ──
     console.log("");
@@ -230,7 +234,7 @@ export async function server(argv: string[]): Promise<void> {
         }
     }
 
-    const eventServer = new EventServer({ port, host, pinecall: pc });
+    const eventServer = new EventServer({ port, host, pinecall: pc, ui });
 
     for (const { agent, name } of deployed) {
         const token = eventServer.attach(agent.core);
@@ -322,6 +326,9 @@ export async function server(argv: string[]): Promise<void> {
     console.log("");
     console.log(`  ${chalk.dim("─".repeat(50))}`);
     console.log(`  ${chalk.bold("Server")}  http://${host}:${port}  ${chalk.dim("(REST + WS)")}`);
+    if (ui) {
+        console.log(`  ${chalk.bold("Dashboard")}  ${chalk.cyan(`http://${host === "0.0.0.0" ? "localhost" : host}:${port}`)}`);
+    }
     console.log(`  ${chalk.dim("─".repeat(50))}`);
     console.log("");
     console.log(`  ${chalk.dim("REST endpoints:")}`);
