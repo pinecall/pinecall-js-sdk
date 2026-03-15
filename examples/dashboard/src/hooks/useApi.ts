@@ -1,7 +1,6 @@
 import { useState, useCallback } from 'react';
 import type { AgentInfo, PhoneInfo, VoiceInfo, AgentConfig } from '../types';
-
-const API_BASE = `http://${window.location.hostname}:4200`;
+import { API_BASE } from '../config';
 
 export function useApi() {
   const [loading, setLoading] = useState(false);

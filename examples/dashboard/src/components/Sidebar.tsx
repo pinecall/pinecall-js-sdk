@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import type { AgentInfo, PhoneInfo, CallInfo } from '../types';
+import { SERVER } from '../config';
 
 interface Props {
   connected: boolean;
@@ -51,7 +52,7 @@ export function Sidebar({
         <div className="flex items-center gap-1.5 mt-2">
           <span className={`w-2 h-2 rounded-full ${connected ? 'bg-success animate-pulse-dot' : 'bg-danger'}`} />
           <span className="text-xs text-muted">
-            {connected ? 'Connected' : 'Disconnected'}
+            {connected ? SERVER : 'Disconnected'}
           </span>
         </div>
       </div>

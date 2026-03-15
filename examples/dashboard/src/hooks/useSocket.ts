@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { WsEvent, CallInfo, TranscriptEntry } from '../types';
-
-const WS_URL = `ws://${window.location.hostname}:4200`;
+import { WS_URL } from '../config';
 
 export interface SocketState {
   connected: boolean;
@@ -36,22 +35,25 @@ export function useSocket(): SocketState {
 
   useEffect(() => {
     let reconnectTimer: ReturnType<typeof setTimeout>;
+    let cancelled = false;
 
     function connect() {
+      if (cancelled) return;
       const socket = new WebSocket(WS_URL);
       ws.current = socket;
 
-      socket.onopen = () => setConnected(true);
+      socket.onopen = () => { if (!cancelled) setConnected(true); };
       socket.onclose = () => {
+        if (cancelled) return;
         setConnected(false);
         reconnectTimer = setTimeout(connect, 2000);
       };
       socket.onerror = () => socket.close();
 
       socket.onmessage = (e) => {
+        if (cancelled) return;
         const evt: WsEvent = JSON.parse(e.data);
 
-        // Log all events
         setEvents(prev => [...prev.slice(-200), evt]);
 
         switch (evt.event) {
@@ -133,7 +135,6 @@ export function useSocket(): SocketState {
           case 'bot.speaking':
             setSpeakingCalls(prev => new Set(prev).add(evt.call_id!));
             break;
-          case 'bot.finished':
           case 'bot.interrupted':
             setSpeakingCalls(prev => { const s = new Set(prev); s.delete(evt.call_id!); return s; });
             break;
@@ -156,6 +157,7 @@ export function useSocket(): SocketState {
 
     connect();
     return () => {
+      cancelled = true;
       clearTimeout(reconnectTimer);
       ws.current?.close();
     };
