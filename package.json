@@ -39,6 +39,12 @@
         "types": "./dist/server/index.d.cts",
         "default": "./dist/server/index.cjs"
       }
+    },
+    "./webrtc": {
+      "import": {
+        "types": "./dist/webrtc/index.d.ts",
+        "default": "./dist/webrtc/index.js"
+      }
     }
   },
   "files": [

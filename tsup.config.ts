@@ -34,6 +34,16 @@ export default defineConfig([
         minify: false,
         external: ["ws"],
     },
+    // WebRTC subpath: browser-only client (ESM + DTS)
+    {
+        entry: { "webrtc/index": "src/webrtc-client.ts" },
+        format: ["esm"],
+        dts: true,
+        splitting: false,
+        sourcemap: true,
+        target: "es2020",
+        minify: false,
+    },
     // CLI binary (ESM, bundled with shebang)
     {
         entry: { "cli/index": "cli/index.ts" },

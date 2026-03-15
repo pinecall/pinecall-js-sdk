@@ -25,7 +25,7 @@ const COMMAND_LIST = [
     "/help", "/phones", "/voices", "/play",
     "/calls", "/switch", "/config", "/dial",
     "/hangup", "/hold", "/unhold",
-    "/mute", "/unmute", "/history",
+    "/mute", "/unmute", "/history", "/webrtc",
 ];
 
 // ── Prompt appearance ────────────────────────────────────────────────────

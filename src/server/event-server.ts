@@ -268,6 +268,19 @@ export class EventServer {
         const url = req.url ?? "/";
         const method = req.method ?? "GET";
 
+        // GET /server-info — Pinecall server URL + app IDs (for WebRTC)
+        if (method === "GET" && url === "/server-info") {
+            const wsUrl = (this._pc as any)?._opts?.url ?? "wss://voice.pinecall.io/client";
+            // Convert ws URL to http base for WebRTC endpoints
+            const httpUrl = wsUrl
+                .replace(/\/client\/?$/, "")  // strip /client path
+                .replace(/^wss:\/\//, "https://")
+                .replace(/^ws:\/\//, "http://");
+            const appIds = [...this._agents].map(a => a.id);
+            this._json(res, 200, { pinecallServer: httpUrl, appIds });
+            return;
+        }
+
         // GET /agents — list agents
         if (method === "GET" && url === "/agents") {
             const agents = [...this._agents].map(a => ({

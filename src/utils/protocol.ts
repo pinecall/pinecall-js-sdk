@@ -32,6 +32,9 @@ export function buildShortcutPayload(opts?: ShortcutInput): Record<string, unkno
     if ("mode" in opts && (opts as Record<string, unknown>).mode !== undefined) {
         payload.mode = (opts as Record<string, unknown>).mode;
     }
+    if ("greeting" in opts && (opts as Record<string, unknown>).greeting !== undefined) {
+        payload.greeting = (opts as Record<string, unknown>).greeting;
+    }
 
     return payload;
 }

@@ -1,10 +1,12 @@
-/** Sidebar — Left sidebar with status, agents, phones. Ported from dev-ui design. */
+/** Sidebar — Left sidebar with status, agents, phones, call history. */
 import { useState, useEffect } from 'react';
 import { Phone, Plus, X, ChevronDown, ChevronUp } from 'lucide-react';
 import StatusDot from './shared/StatusDot';
+import CallHistory from './CallHistory';
 import { SERVER } from '../config';
 import { formatPhoneNumber } from '../utils';
 import type { AgentInfo, PhoneInfo, CallInfo, AgentConfig } from '../types';
+import type { CallHistoryEntry } from '../hooks/useSocket';
 
 interface Props {
   connected: boolean;
@@ -16,11 +18,16 @@ interface Props {
   deleteAgent: (name: string) => Promise<any>;
   createAgent: (config: AgentConfig) => Promise<any>;
   onRefresh: () => void;
+  callHistory: CallHistoryEntry[];
+  viewingHistoryId: string | null;
+  onViewHistory: (callId: string | null) => void;
+  isAnythingActive: boolean;
 }
 
 export function Sidebar({
   connected, agents, calls, activePhones,
   fetchAgents, fetchPhones, deleteAgent, createAgent, onRefresh,
+  callHistory, viewingHistoryId, onViewHistory, isAnythingActive,
 }: Props) {
   const [agentList, setAgentList] = useState<AgentInfo[]>([]);
   const [phones, setPhones] = useState<PhoneInfo[]>([]);
@@ -226,6 +233,14 @@ export function Sidebar({
             </div>
           )}
         </div>
+
+        {/* Call History */}
+        <CallHistory
+          history={callHistory}
+          viewingId={viewingHistoryId}
+          onView={onViewHistory}
+          isAnythingActive={isAnythingActive}
+        />
       </div>
     </aside>
   );

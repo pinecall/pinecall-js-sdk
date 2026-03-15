@@ -473,6 +473,285 @@ async function handlePlay(ctx: CommandContext, args: string[]): Promise<void> {
 
 // ── Command registry ─────────────────────────────────────────────────────
 
+// ── /webrtc command ─────────────────────────────────────────────────────
+
+let _webrtcServer: import("node:http").Server | null = null;
+
+async function handleWebRTC(ctx: CommandContext, args: string[]): Promise<void> {
+    const log = ctx.log ?? logLine;
+
+    if (_webrtcServer) {
+        log(`${WARN("WebRTC browser already running. Close the browser tab first.")}`);
+        return;
+    }
+
+    // Resolve app_id from agent
+    const appId = (ctx.agent as any)._appId ?? (ctx.agent as any).appId ?? args[0];
+    if (!appId) {
+        log(`${ERR("Cannot determine app_id. Pass it as argument:")} /webrtc my-agent`);
+        return;
+    }
+
+    // Resolve server URL
+    const serverUrl = (ctx.pc as any)?._url ?? (ctx.pc as any)?.url ?? "http://localhost:8765";
+    const httpUrl = serverUrl.replace(/^wss:\/\//, "https://").replace(/^ws:\/\//, "http://");
+
+    const http = await import("node:http");
+    const { exec } = await import("node:child_process");
+
+    const html = generateWebRTCPage(httpUrl, appId);
+
+    const server = http.createServer((req, res) => {
+        res.writeHead(200, { "Content-Type": "text/html", "Access-Control-Allow-Origin": "*" });
+        res.end(html);
+    });
+
+    const port = 9876;
+    server.listen(port, () => {
+        log(`${OK("✓")} WebRTC page at ${ACCENT(`http://localhost:${port}`)}`);
+        log(`${DIM("Opening browser…")}`);
+        const url = `http://localhost:${port}`;
+        const cmd = process.platform === "darwin" ? `open "${url}"` : process.platform === "win32" ? `start "${url}"` : `xdg-open "${url}"`;
+        exec(cmd);
+    });
+
+    _webrtcServer = server;
+
+    // Auto-close when server process exits
+    process.on("exit", () => { server.close(); });
+}
+
+function generateWebRTCPage(serverUrl: string, appId: string): string {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pinecall WebRTC — ${appId}</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Inter', -apple-system, sans-serif;
+    background: #0d0118;
+    color: #eef0fa;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 2rem;
+  }
+  h1 { font-size: 1.4rem; font-weight: 600; margin-bottom: 0.5rem; color: #c084fc; }
+  .subtitle { font-size: 0.85rem; color: #7c6f99; margin-bottom: 2rem; }
+  .card {
+    background: rgba(30, 15, 50, 0.8);
+    border: 1px solid rgba(120, 80, 180, 0.2);
+    border-radius: 16px;
+    padding: 2rem;
+    width: 100%;
+    max-width: 520px;
+    backdrop-filter: blur(20px);
+  }
+  .status { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1.5rem; font-size: 0.9rem; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .dot.idle { background: #555; }
+  .dot.connecting { background: #ffc43c; animation: pulse 1s infinite; }
+  .dot.connected { background: #5cf598; }
+  .dot.error { background: #ff6b6b; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+  button {
+    padding: 0.75rem 1.5rem;
+    border: none;
+    border-radius: 12px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    width: 100%;
+  }
+  button:hover { transform: scale(1.02); }
+  button:active { transform: scale(0.98); }
+  .btn-call { background: linear-gradient(135deg, #5cf598, #22c55e); color: #0d0118; }
+  .btn-end { background: linear-gradient(135deg, #ff6b6b, #dc2626); color: white; }
+  .btn-call:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+  .transcript {
+    margin-top: 1.5rem;
+    max-height: 300px;
+    overflow-y: auto;
+    padding: 1rem;
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 8px;
+    font-size: 0.85rem;
+    line-height: 1.5;
+  }
+  .msg { padding: 0.3rem 0; }
+  .msg.user { color: #a78bfa; }
+  .msg.bot { color: #5cf598; }
+  .msg.system { color: #7c6f99; font-style: italic; }
+  .msg .label { font-weight: 600; margin-right: 0.3rem; }
+  .timer { font-family: 'SF Mono', monospace; color: #7c6f99; font-size: 0.8rem; }
+</style>
+</head>
+<body>
+<h1>🎙️ Pinecall WebRTC</h1>
+<p class="subtitle">${appId} — ${serverUrl}</p>
+<div class="card">
+  <div class="status">
+    <div class="dot" id="dot"></div>
+    <span id="statusText">Ready</span>
+    <span class="timer" id="timer" style="margin-left:auto"></span>
+  </div>
+  <button id="callBtn" class="btn-call" onclick="toggleCall()">Start Call</button>
+  <div class="transcript" id="transcript"></div>
+</div>
+<script>
+const SERVER = "${serverUrl}";
+const APP_ID = "${appId}";
+let pc = null, localStream = null, remoteAudio = null, connected = false;
+let timerInterval = null, startTime = 0;
+
+function $(id) { return document.getElementById(id); }
+function setStatus(state, text) {
+  $("dot").className = "dot " + state;
+  $("statusText").textContent = text;
+}
+function addMsg(role, text) {
+  const d = document.createElement("div");
+  d.className = "msg " + role;
+  d.innerHTML = '<span class="label">' + (role === "user" ? "You:" : role === "bot" ? "Bot:" : "•") + "</span>" + text;
+  $("transcript").appendChild(d);
+  $("transcript").scrollTop = $("transcript").scrollHeight;
+}
+function startTimer() {
+  startTime = Date.now();
+  timerInterval = setInterval(() => {
+    const s = Math.floor((Date.now() - startTime) / 1000);
+    $("timer").textContent = Math.floor(s/60).toString().padStart(2,"0") + ":" + (s%60).toString().padStart(2,"0");
+  }, 1000);
+}
+function stopTimer() { clearInterval(timerInterval); $("timer").textContent = ""; }
+
+async function toggleCall() {
+  if (connected) { disconnect(); return; }
+  try {
+    setStatus("connecting", "Connecting…");
+    $("callBtn").disabled = true;
+
+    // ICE servers
+    let iceServers = [{ urls: "stun:stun.l.google.com:19302" }];
+    try { const r = await fetch(SERVER + "/webrtc/ice-servers"); if (r.ok) { const d = await r.json(); iceServers = d.iceServers || d.ice_servers || iceServers; } } catch {}
+
+    // Mic
+    localStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false });
+
+    // Peer connection
+    pc = new RTCPeerConnection({ iceServers });
+    localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+
+    // Remote audio
+    pc.ontrack = e => {
+      if (!remoteAudio) { remoteAudio = new Audio(); remoteAudio.autoplay = true; }
+      remoteAudio.srcObject = e.streams[0];
+    };
+
+    // Data channel
+    pc.ondatachannel = e => {
+      const dc = e.channel;
+      dc.onmessage = msg => {
+        try {
+          const data = JSON.parse(msg.data);
+          switch (data.event) {
+            case "session.started": addMsg("system", "Session started"); break;
+            case "user.speaking": if (data.text) updateUser(data.text, true); break;
+            case "user.message": if (data.text) updateUser(data.text, false); break;
+            case "bot.speaking": if (data.text) addMsg("bot", data.text); break;
+            case "bot.word": updateBot(data.message_id, data.word, data.word_index); break;
+            case "bot.finished": break;
+            case "bot.interrupted": addMsg("system", "Bot interrupted"); break;
+            case "turn.end": break;
+          }
+        } catch {}
+      };
+      // Ping
+      setInterval(() => { if (dc.readyState === "open") dc.send("ping"); }, 1000);
+    };
+
+    // Connection state
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === "connected") {
+        connected = true;
+        setStatus("connected", "Connected");
+        $("callBtn").disabled = false;
+        $("callBtn").textContent = "End Call";
+        $("callBtn").className = "btn-end";
+        startTimer();
+        addMsg("system", "Connected — start talking!");
+      } else if (pc.connectionState === "disconnected" || pc.connectionState === "failed") {
+        disconnect();
+      }
+    };
+
+    // Offer
+    const offer = await pc.createOffer({ offerToReceiveAudio: true });
+    await pc.setLocalDescription(offer);
+    await new Promise(r => { if (pc.iceGatheringState === "complete") r(); else { const t = setTimeout(r, 2000); pc.onicegatheringstatechange = () => { if (pc.iceGatheringState === "complete") { clearTimeout(t); r(); } }; } });
+
+    const res = await fetch(SERVER + "/webrtc/offer?app_id=" + encodeURIComponent(APP_ID), {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sdp: pc.localDescription.sdp, type: pc.localDescription.type }),
+    });
+    if (!res.ok) { const e = await res.json(); throw new Error(e.detail || "Failed"); }
+    const answer = await res.json();
+    await pc.setRemoteDescription({ type: answer.type, sdp: answer.sdp });
+  } catch (err) {
+    setStatus("error", "Error: " + err.message);
+    $("callBtn").disabled = false;
+    disconnect();
+  }
+}
+
+function disconnect() {
+  if (pc) { pc.close(); pc = null; }
+  if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
+  if (remoteAudio) { remoteAudio.pause(); remoteAudio.srcObject = null; remoteAudio = null; }
+  connected = false;
+  setStatus("idle", "Disconnected");
+  stopTimer();
+  $("callBtn").textContent = "Start Call";
+  $("callBtn").className = "btn-call";
+  $("callBtn").disabled = false;
+}
+
+// Live transcript helpers
+let lastUserEl = null;
+function updateUser(text, interim) {
+  if (interim && lastUserEl) { lastUserEl.innerHTML = '<span class="label">You:</span>' + text; return; }
+  lastUserEl = document.createElement("div");
+  lastUserEl.className = "msg user";
+  lastUserEl.innerHTML = '<span class="label">You:</span>' + text;
+  $("transcript").appendChild(lastUserEl);
+  if (!interim) lastUserEl = null;
+  $("transcript").scrollTop = $("transcript").scrollHeight;
+}
+
+const botWords = {};
+function updateBot(msgId, word, idx) {
+  if (!botWords[msgId]) { botWords[msgId] = { el: null, words: [] }; }
+  const b = botWords[msgId];
+  if (!b.el) {
+    b.el = document.createElement("div");
+    b.el.className = "msg bot";
+    b.el.innerHTML = '<span class="label">Bot:</span>';
+    $("transcript").appendChild(b.el);
+  }
+  b.words[idx] = word;
+  b.el.innerHTML = '<span class="label">Bot:</span>' + b.words.filter(Boolean).join(" ");
+  $("transcript").scrollTop = $("transcript").scrollHeight;
+}
+</script>
+</body>
+</html>`;
+}
+
 const commands: Record<string, CommandDef> = {
     "/help":    { description: "Show available commands", handler: handleHelp },
     "/phones":  { description: "List phone numbers", handler: handlePhones },
@@ -488,6 +767,7 @@ const commands: Record<string, CommandDef> = {
     "/mute":    { description: "Mute the microphone", handler: handleMute },
     "/unmute":  { description: "Unmute the microphone", handler: handleUnmute },
     "/history": { description: "Show raw LLM history (JSON)", handler: handleHistory },
+    "/webrtc":  { description: "Open WebRTC call in browser", handler: handleWebRTC },
 };
 
 /**

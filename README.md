@@ -22,6 +22,7 @@ npm install @pinecall/sdk
   - [GPTAgent](#gptagent)
   - [Channels (Phone, WebRTC)](#channels)
   - [Dynamic Greeting](#dynamic-greeting)
+  - [Prompt Template Variables](#prompt-template-variables)
   - [Server-Side LLM](#server-side-llm)
   - [History Management](#history-management)
   - [Tool Calling](#tool-calling)
@@ -36,6 +37,8 @@ npm install @pinecall/sdk
   - [WebSocket Events](#websocket-events)
   - [Authentication](#authentication)
   - [Dashboard UI](#dashboard-ui)
+- [WebRTC Browser Client (`@pinecall/sdk/webrtc`)](#webrtc-browser-client)
+- [Runtime Configuration](#runtime-configuration)
 - [Configuration Reference](#configuration-reference)
   - [Agent Config](#agent-config)
   - [STT Providers](#stt-providers)
@@ -150,6 +153,7 @@ pinecall server --disable-ui # API only, no Dashboard
 | `@pinecall/sdk` | Core: `Pinecall`, `Agent`, `Call`, `ReplyStream` |
 | `@pinecall/sdk/ai` | AI Agents: `Agent`, `GPTAgent`, `Phone`, `WebRTC`, `Channel` |
 | `@pinecall/sdk/server` | Server: `EventServer` (REST + WS + Dashboard) |
+| `@pinecall/sdk/webrtc` | Browser WebRTC client: `PinecallWebRTC` |
 
 ---
 
@@ -515,6 +519,63 @@ class Receptionist extends GPTAgent {
 ```
 
 Priority: `prompts/{className}.txt` → `prompt` field → default prompt.
+
+---
+
+### Prompt Template Variables
+
+Prompts support `{{variable}}` placeholders that can be replaced at runtime using `call.setPromptVars()`.
+
+**1. Define a prompt with placeholders:**
+
+```typescript
+class VIPBot extends GPTAgent {
+  model = "gpt-4.1-nano";
+  prompt = `You are helping {{customer_name}} ({{plan}} plan).
+Their account was created on {{created_date}}.
+Be friendly and address them by name.`;
+}
+```
+
+Or in a prompt file (`prompts/vipbot.txt`):
+
+```
+You are helping {{customer_name}} ({{plan}} plan).
+Their account was created on {{created_date}}.
+Be friendly and address them by name.
+```
+
+**2. Replace variables at runtime:**
+
+```typescript
+class VIPBot extends GPTAgent {
+  model = "gpt-4.1-nano";
+  // Template auto-loaded from prompts/vipbot.txt
+
+  async onCallStarted(call) {
+    const user = await db.findByPhone(call.from);
+    if (user) {
+      await call.setPromptVars({
+        customer_name: user.name,
+        plan: user.plan,
+        created_date: user.createdAt,
+      });
+    }
+  }
+}
+```
+
+**3. Combine with `setPromptFile()`:**
+
+```typescript
+async onCallStarted(call) {
+  // Load a different template based on context
+  await call.setPromptFile("vip_support.txt");
+  await call.setPromptVars({ customer_name: "John", plan: "Enterprise" });
+}
+```
+
+`setPromptVars()` replaces all `{{key}}` occurrences in the current template and sends the resolved prompt to the server. The original template is preserved — call `setPromptVars()` again with different values to re-render.
 
 ---
 
@@ -1039,6 +1100,193 @@ Or in `pinecall.config.json`:
 ```json
 { "ui": false }
 ```
+
+---
+
+## WebRTC Browser Client
+
+The `@pinecall/sdk/webrtc` package provides a standalone browser-side WebRTC client for voice calls. Use this when building custom UIs — no full SDK or WebSocket connection needed.
+
+The browser connects **directly to the Pinecall server** for WebRTC media. The SDK server (Node.js) only handles agent registration and provides the server URL via `/server-info`:
+
+```
+SDK Server (Node.js :4100)
+  ├── Registers agents + config via WSS
+  ├── Serves Dashboard UI, REST API, WS events
+  └── GET /server-info → returns Pinecall server URL
+
+Browser (PinecallWebRTC)
+  └── WebRTC direct to Pinecall server → POST /webrtc/offer?app_id=xxx
+      ├── Audio in:  mic → STT/VAD (server-side)
+      ├── Audio out: TTS → speaker
+      └── Data channel: events (transcripts, bot.word, etc.)
+```
+
+```typescript
+import { PinecallWebRTC } from "@pinecall/sdk/webrtc";
+```
+
+### Quick Example
+
+```typescript
+const webrtc = new PinecallWebRTC("https://your-server.com:4100", "my-agent");
+
+webrtc.on("connected", () => console.log("Connected!"));
+webrtc.on("bot.word", (data) => console.log(data.word));
+webrtc.on("user.message", (data) => console.log("User:", data.text));
+webrtc.on("turn.end", (data) => console.log("Turn ended"));
+
+await webrtc.connect();
+
+// Mute/unmute via data channel
+webrtc.send({ action: "mute" });
+webrtc.send({ action: "unmute" });
+
+// Disconnect
+webrtc.disconnect();
+```
+
+### Constructor
+
+```typescript
+new PinecallWebRTC(serverUrl: string, appId: string, options?: WebRTCOptions)
+```
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `serverUrl` | `string` | Pinecall server URL (e.g., `"https://your-server.com:4100"`) |
+| `appId` | `string` | Agent ID to connect to |
+| `options` | `WebRTCOptions` | Optional configuration |
+
+### WebRTCOptions
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `audio` | `MediaStreamConstraints["audio"]` | Echo/noise cancellation enabled | Audio constraints for `getUserMedia` |
+| `iceServers` | `RTCIceServer[]` | Fetched from server | Custom ICE servers |
+| `autoReconnect` | `boolean` | `false` | Auto-reconnect on disconnect |
+
+### Methods
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `connect()` | `Promise<void>` | Connect to the Pinecall server via WebRTC |
+| `disconnect()` | `void` | Disconnect and clean up resources |
+| `send(data)` | `void` | Send a JSON message via the data channel |
+| `on(event, handler)` | `this` | Register an event handler |
+| `off(event, handler)` | `this` | Remove an event handler |
+
+### Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `isConnected` | `boolean` | Whether the connection is active |
+| `sessionId` | `string \| null` | Server-assigned session ID |
+| `pcId` | `string \| null` | Peer connection ID |
+
+### Events
+
+| Event | Data | Description |
+|-------|------|-------------|
+| `connected` | — | WebRTC connection established |
+| `disconnected` | `reason: string` | Connection lost |
+| `error` | `Error` | Connection error |
+| `session.started` | `{ session_id, call_id }` | Voice session started |
+| `session.ended` | `{ session_id, reason }` | Voice session ended |
+| `user.speaking` | `{ text, turn_id }` | Interim user transcript |
+| `user.message` | `{ text, message_id }` | Final user transcript |
+| `turn.pause` | `{ turn_id, probability }` | Turn paused |
+| `turn.end` | `{ turn_id, probability }` | Turn confirmed |
+| `bot.speaking` | `{ message_id, text }` | Bot started speaking |
+| `bot.word` | `{ message_id, word, word_index }` | Word-level TTS sync |
+| `bot.finished` | `{ message_id, duration_ms }` | Bot finished speaking |
+| `bot.interrupted` | `{ message_id }` | Bot was interrupted |
+| `audio.metrics` | `{ source, energy_db, rms, peak, is_speech, vad_prob }` | Audio analytics |
+| `config.updated` | `{ config }` | Server config changed |
+
+### Data Channel Commands
+
+Send commands to the server via `webrtc.send()`:
+
+```typescript
+webrtc.send({ action: "mute" });    // Mute mic (pauses STT on server)
+webrtc.send({ action: "unmute" });  // Unmute mic (resumes STT)
+```
+
+---
+
+## Runtime Configuration
+
+Pinecall supports modifying agents, channels, and calls at runtime — no restart required.
+
+### Agent-Level Configuration
+
+Update agent-wide defaults. Affects all future sessions (not active calls).
+
+```typescript
+// Change voice for all future calls
+agent.configure({ voice: "cartesia:abc123" });
+
+// Change STT and language
+agent.configure({ stt: "deepgram:nova-3:es", language: "es" });
+
+// Via REST API
+curl -X PATCH http://localhost:4100/agents/my-agent \
+  -H "Content-Type: application/json" \
+  -d '{"voice": "cartesia:abc123", "language": "es"}'
+```
+
+### Channel Management
+
+Add, remove, and configure channels in real-time:
+
+```typescript
+// Add a phone number to an existing agent
+agent.addChannel("phone", "+12025551234");
+agent.addChannel("phone", "+12025555678", { voice: "cartesia:abc", greeting: "¡Hola!" });
+
+// Add WebRTC capability
+agent.addChannel("webrtc");
+
+// Change config for a specific channel
+agent.configureChannel("+12025551234", { voice: "elevenlabs:xyz", language: "fr" });
+
+// Remove a channel (stops accepting calls on that number)
+agent.removeChannel("+12025551234");
+```
+
+Channel changes take effect immediately — new calls use the updated config.
+
+### Call-Level Configuration
+
+Change config for an active call (mid-session):
+
+```typescript
+// Switch voice mid-call
+call.configure({ voice: "cartesia:abc123" });
+
+// Change STT provider mid-call
+call.configure({ stt: "deepgram:nova-3:fr", language: "fr" });
+
+// Adjust turn detection sensitivity
+call.configure({ turnDetection: { mode: "smart_turn", smart_turn_threshold: 0.6 } });
+
+// Via REST API
+curl -X PATCH http://localhost:4100/calls/CA_abc123 \
+  -H "Content-Type: application/json" \
+  -d '{"voice": "cartesia:abc123"}'
+
+// Via WebSocket
+{ "action": "configure", "call_id": "CA_abc123", "voice": "elevenlabs:xyz" }
+```
+
+### Config Priority
+
+```
+call.configure()  >  channel config  >  agent.configure()  >  class defaults
+```
+
+More specific overrides always win. A channel config overrides agent defaults; a mid-call configure overrides everything for that session.
 
 ---
 

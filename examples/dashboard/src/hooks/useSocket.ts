@@ -6,13 +6,26 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import type { Message, EventEntry, CallInfo, AudioMetrics, WsEvent } from '../types';
 import { WS_URL } from '../config';
 
+/** A completed call with its conversation snapshot */
+export interface CallHistoryEntry {
+  id: string;
+  type: 'phone' | 'webrtc';
+  from: string;
+  to: string;
+  direction: 'inbound' | 'outbound' | 'webrtc';
+  startedAt: number;
+  endedAt: number;
+  duration: number;
+  messages: Message[];
+}
+
 export interface SocketState {
   connected: boolean;
   agents: string[];
   calls: Map<string, CallInfo>;
   messages: Message[];
   eventLog: EventEntry[];
-  callStatus: string;         // 'idle' | 'listening' | 'speaking' | 'pause' | 'ended'
+  callStatus: string;         // 'idle' | 'listening' | 'speaking' | 'pause'
   sessionId: string | null;
   sessionFrom: string | null;
   sessionType: string | null; // 'phone' | 'webrtc' | null
@@ -20,9 +33,17 @@ export interface SocketState {
   userMetrics: React.MutableRefObject<AudioMetrics | null>;
   botMetrics: React.MutableRefObject<AudioMetrics | null>;
   activePhones: string[];
+  /** Call history — completed calls with conversation snapshots */
+  callHistory: CallHistoryEntry[];
   send: (msg: any) => void;
   clearMessages: () => void;
   clearEvents: () => void;
+  /** View a historical call's messages */
+  viewHistoryCall: (callId: string | null) => void;
+  /** Currently viewed history call ID (null = live) */
+  viewingHistoryId: string | null;
+  /** Save WebRTC call to history (called from App when WebRTC ends) */
+  saveWebRTCToHistory: (msgs: Message[], duration: number) => void;
 }
 
 export function useSocket(): SocketState {
@@ -38,10 +59,29 @@ export function useSocket(): SocketState {
   const [sessionType, setSessionType] = useState<string | null>(null);
   const [duration, setDuration] = useState(0);
   const [activePhones, setActivePhones] = useState<string[]>([]);
+  const [callHistory, setCallHistory] = useState<CallHistoryEntry[]>([]);
+  const [viewingHistoryId, setViewingHistoryId] = useState<string | null>(null);
 
   const userMetrics = useRef<AudioMetrics | null>(null);
   const botMetrics = useRef<AudioMetrics | null>(null);
   const durationRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // ── Refs for values that handleEvent needs (avoids stale closures) ────
+  const sessionIdRef = useRef<string | null>(null);
+  const sessionFromRef = useRef<string | null>(null);
+  const sessionTypeRef = useRef<string | null>(null);
+  const messagesRef = useRef<Message[]>([]);
+  const callStartTimeRef = useRef(0);
+  const durationValRef = useRef(0);
+
+  // Keep refs in sync with state
+  messagesRef.current = messages;
+  durationValRef.current = duration;
+
+  // Setters that update both state + ref
+  const setSessionIdBoth = useCallback((v: string | null) => { sessionIdRef.current = v; setSessionId(v); }, []);
+  const setSessionFromBoth = useCallback((v: string | null) => { sessionFromRef.current = v; setSessionFrom(v); }, []);
+  const setSessionTypeBoth = useCallback((v: string | null) => { sessionTypeRef.current = v; setSessionType(v); }, []);
 
   const send = useCallback((msg: any) => {
     if (ws.current?.readyState === WebSocket.OPEN) {
@@ -51,6 +91,10 @@ export function useSocket(): SocketState {
 
   const clearMessages = useCallback(() => setMessages([]), []);
   const clearEvents = useCallback(() => setEventLog([]), []);
+
+  const viewHistoryCall = useCallback((callId: string | null) => {
+    setViewingHistoryId(callId);
+  }, []);
 
   const addEvent = useCallback((eventName: string, direction: 'in' | 'out' | 'system', data: Record<string, any> = {}) => {
     setEventLog(prev => [{
@@ -65,9 +109,12 @@ export function useSocket(): SocketState {
   const startDuration = useCallback(() => {
     if (durationRef.current) clearInterval(durationRef.current);
     setDuration(0);
+    callStartTimeRef.current = Date.now();
     const startTime = Date.now();
     durationRef.current = setInterval(() => {
-      setDuration(Math.floor((Date.now() - startTime) / 1000));
+      const d = Math.floor((Date.now() - startTime) / 1000);
+      durationValRef.current = d;
+      setDuration(d);
     }, 1000);
   }, []);
 
@@ -75,14 +122,29 @@ export function useSocket(): SocketState {
     if (durationRef.current) { clearInterval(durationRef.current); durationRef.current = null; }
   }, []);
 
-  const resetSession = useCallback(() => {
-    setMessages([]);
-    setCallStatus('idle');
-    stopDuration();
-    setDuration(0);
-  }, [stopDuration]);
+  // Save conversation to history — uses refs, no stale closure issue
+  const pushHistory = useCallback((entry: CallHistoryEntry) => {
+    setCallHistory(prev => [entry, ...prev].slice(0, 20));
+  }, []);
 
-  // Event handler — mirrors dev-ui's handleEvent exactly
+  // Public method for App to save WebRTC calls
+  const saveWebRTCToHistory = useCallback((msgs: Message[], dur: number) => {
+    if (msgs.length === 0) return;
+    pushHistory({
+      id: `webrtc-${Date.now()}`,
+      type: 'webrtc',
+      from: 'WebRTC',
+      to: '',
+      direction: 'webrtc',
+      startedAt: Date.now() - dur * 1000,
+      endedAt: Date.now(),
+      duration: dur,
+      messages: [...msgs],
+    });
+  }, [pushHistory]);
+
+  // ── Event handler — uses refs for session state to avoid stale closures ──
+  // Dependencies are ONLY stable callbacks, never state variables.
   const handleEvent = useCallback((data: WsEvent) => {
     const eventType = data.event;
 
@@ -108,7 +170,6 @@ export function useSocket(): SocketState {
         setConnected(false);
         break;
       case 'server.reconnecting':
-        // Event logged automatically via addEvent above
         break;
 
       // ─── Phone events ───────────────────────────────────────────────
@@ -120,13 +181,35 @@ export function useSocket(): SocketState {
         break;
 
       // ─── Call lifecycle ─────────────────────────────────────────────
-      case 'call.started':
-        resetSession();
-        setSessionId(data.call_id);
-        setSessionType('phone');
-        setSessionFrom(data.from_number || data.from || 'Unknown');
+      case 'call.started': {
+        // Save previous call to history if there was one
+        const prevId = sessionIdRef.current;
+        const prevFrom = sessionFromRef.current;
+        const prevType = sessionTypeRef.current;
+        const prevMsgs = messagesRef.current;
+        if (prevId && prevMsgs.length > 0) {
+          pushHistory({
+            id: prevId,
+            type: (prevType as 'phone' | 'webrtc') || 'phone',
+            from: prevFrom || 'Unknown',
+            to: '',
+            direction: 'inbound',
+            startedAt: callStartTimeRef.current || Date.now(),
+            endedAt: Date.now(),
+            duration: durationValRef.current,
+            messages: [...prevMsgs],
+          });
+        }
+
+        // Reset for new call
+        setMessages([]);
         setCallStatus('listening');
+        stopDuration();
+        setSessionIdBoth(data.call_id);
+        setSessionTypeBoth('phone');
+        setSessionFromBoth(data.from_number || data.from || 'Unknown');
         startDuration();
+        setViewingHistoryId(null); // Switch to live
         setCalls(prev => {
           const next = new Map(prev);
           next.set(data.call_id, {
@@ -137,38 +220,52 @@ export function useSocket(): SocketState {
           return next;
         });
         break;
+      }
 
-      case 'call.ended':
-        setCallStatus('ended');
+      case 'call.ended': {
+        // Save current conversation to history
+        const cid = data.call_id || sessionIdRef.current;
+        const msgs = messagesRef.current;
+        if (cid && msgs.length > 0) {
+          pushHistory({
+            id: cid,
+            type: (sessionTypeRef.current as 'phone' | 'webrtc') || 'phone',
+            from: sessionFromRef.current || 'Unknown',
+            to: '',
+            direction: 'inbound',
+            startedAt: callStartTimeRef.current || Date.now(),
+            endedAt: Date.now(),
+            duration: durationValRef.current,
+            messages: [...msgs],
+          });
+        }
+
+        // Clear session
+        setCallStatus('idle');
         stopDuration();
-        setSessionId(null);
-        setSessionType(null);
-        setSessionFrom(null);
         setDuration(0);
+        setSessionIdBoth(null);
+        setSessionTypeBoth(null);
+        setSessionFromBoth(null);
+        // Keep messages visible until next call
         if (data.call_id) {
           setCalls(prev => { const next = new Map(prev); next.delete(data.call_id); return next; });
         }
         break;
+      }
 
       // ─── User speech ────────────────────────────────────────────────
-      // Merge rule: update the SAME user bubble as long as no bot/system
-      // message has appeared after it. This correctly merges consecutive
-      // user turns (native turn detection finalizes immediately) into
-      // one bubble until the bot actually responds.
       case 'user.speaking':
         if (data.text) {
           setMessages(prev => {
-            // Find last user msg that has no bot/system message after it
             const lastIdx = prev.findLastIndex(m => m.role === 'user');
             const hasResponseAfter = lastIdx >= 0 && prev.slice(lastIdx + 1).some(m => m.role !== 'user');
             if (lastIdx >= 0 && !hasResponseAfter) {
-              // Update existing bubble — even if finalized, re-open it
               return prev.map((m, i) => i === lastIdx
                 ? { ...m, text: data.text, isInterim: true, status: null, finalized: false, turnId: data.turn_id }
                 : m
               );
             }
-            // Bot spoke in between → create new user bubble
             return [...prev, {
               id: Date.now(), role: 'user' as const, text: data.text,
               isInterim: true, turnId: data.turn_id,
@@ -179,10 +276,6 @@ export function useSocket(): SocketState {
         break;
 
       case 'user.message':
-        // Use !finalized to find the target bubble — NOT "no bot after".
-        // Reason: eager.turn can trigger bot.speaking BEFORE user.message
-        // arrives, so a bot bubble may appear between user.speaking and
-        // user.message for the SAME turn.
         if (data.text) {
           setMessages(prev => {
             const idx = prev.findLastIndex(m => m.role === 'user' && !m.finalized);
@@ -192,7 +285,6 @@ export function useSocket(): SocketState {
                 : m
               );
             }
-            // Fallback: no unfinalized user msg, create one
             return [...prev, {
               id: Date.now(), role: 'user' as const, text: data.text,
               isInterim: false, messageId: data.message_id,
@@ -202,8 +294,6 @@ export function useSocket(): SocketState {
         break;
 
       // ─── Turn detection ─────────────────────────────────────────────
-      // These also use !finalized to find the correct user bubble,
-      // since bot.speaking can arrive before turn.end due to eager.turn.
       case 'turn.pause':
         setMessages(prev => {
           const idx = prev.findLastIndex(m => m.role === 'user' && !m.finalized);
@@ -310,7 +400,8 @@ export function useSocket(): SocketState {
 
       default: break;
     }
-  }, [addEvent, resetSession, startDuration, stopDuration]);
+  // IMPORTANT: Only stable refs/callbacks in deps — NO state variables!
+  }, [addEvent, pushHistory, startDuration, stopDuration, setSessionIdBoth, setSessionFromBoth, setSessionTypeBoth]);
 
   // ─── WebSocket connection ─────────────────────────────────────────────
   useEffect(() => {
@@ -339,7 +430,8 @@ export function useSocket(): SocketState {
   return {
     connected, agents, calls, messages, eventLog, callStatus,
     sessionId, sessionFrom, sessionType, duration,
-    userMetrics, botMetrics, activePhones,
-    send, clearMessages, clearEvents,
+    userMetrics, botMetrics, activePhones, callHistory,
+    send, clearMessages, clearEvents, viewHistoryCall, viewingHistoryId,
+    saveWebRTCToHistory,
   };
 }

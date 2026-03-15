@@ -42,14 +42,16 @@ export class Channel {
     config?: Partial<SessionConfig>;
 
     /** Build the config payload for this channel. */
-    toConfig(): ChannelConfig {
-        const cfg: ChannelConfig = {};
+    toConfig(): ChannelConfig & { greeting?: string } {
+        const cfg: ChannelConfig & { greeting?: string } = {};
         if (this.voice) cfg.voice = this.voice;
         if (this.language) cfg.language = this.language;
         if (this.stt) cfg.stt = this.stt;
         if (this.turnDetection) cfg.turnDetection = this.turnDetection;
         if (this.interruption !== undefined) cfg.interruption = this.interruption;
         if (this.config) cfg.config = this.config;
+        // Include greeting for server-side LLM (only static strings; function greetings are client-side)
+        if (typeof this.greeting === "string" && this.greeting) cfg.greeting = this.greeting;
         return cfg;
     }
 }
