@@ -21,7 +21,9 @@ npm install @pinecall/sdk
   - [Agent Base Class](#agent-base-class)
   - [GPTAgent](#gptagent)
   - [Channels (Phone, WebRTC)](#channels)
+  - [Dynamic Greeting](#dynamic-greeting)
   - [Server-Side LLM](#server-side-llm)
+  - [History Management](#history-management)
   - [Tool Calling](#tool-calling)
   - [ConversationHistory](#conversationhistory)
 - [CLI](#cli)
@@ -361,7 +363,7 @@ class MyBot extends Agent {
 |----------|------|---------|-------------|
 | `model` | `string` | — | LLM model (e.g., `"gpt-4.1-nano"`) |
 | `instructions` | `string` | `"You are a helpful voice assistant."` | System prompt |
-| `greeting` | `string` | — | Auto-spoken on call start |
+| `greeting` | `string \| ((call) => string \| Promise<string>)` | — | Auto-spoken on call start. Supports async callbacks |
 | `voice` | `string \| object` | — | TTS voice (`"elevenlabs:id"` or config) |
 | `language` | `string` | — | Language code (`"en"`, `"es"`, `"fr"`, ...) |
 | `stt` | `string \| object` | — | STT provider (`"deepgram"`, `"deepgram:nova-3"`, ...) |
@@ -444,6 +446,33 @@ phone.turnDetection = { mode: "smart_turn", smart_turn_threshold: 0.6 };
 
 ---
 
+#### Dynamic Greeting
+
+`greeting` can be a callback for personalized greetings:
+
+```typescript
+class MyBot extends GPTAgent {
+  model = "gpt-4.1-nano";
+  phone = new Phone("+13186330963");
+
+  // Time-based
+  greeting = (call) => {
+    const hour = new Date().getHours();
+    return hour < 12 ? "Good morning!" : "Good afternoon!";
+  };
+
+  // Async — DB lookup by caller
+  greeting = async (call) => {
+    const user = await db.findByPhone(call.from);
+    return user ? `Welcome back, ${user.name}!` : "Hello! How can I help?";
+  };
+}
+```
+
+The callback receives the full `Call` object with `call.from`, `call.to`, `call.direction`, and `call.metadata`.
+
+---
+
 ### Server-Side LLM
 
 The Pinecall server can run LLM inference directly — the SDK only needs to define the model, instructions, and tools. This eliminates SDK round-trips for LLM calls and provides the lowest latency.
@@ -482,7 +511,7 @@ class CustomBot extends Agent {
 | `instructions` | `string` | `"You are a helpful voice assistant."` | System prompt |
 | `temperature` | `number` | — | Sampling temperature (0-2) |
 | `maxTokens` | `number` | — | Maximum response tokens |
-| `greeting` | `string` | — | Auto-spoken on call start |
+| `greeting` | `string \| ((call) => string \| Promise<string>)` | — | Auto-spoken on call start |
 | `turnEvent` | `string` | `"eager.turn"` | When to invoke LLM: `"eager.turn"` or `"turn.end"` |
 
 #### LLM Events
@@ -494,6 +523,43 @@ When using server-side LLM, these events are emitted and streamed to WS clients:
 | `llm.stream` | Streaming LLM response chunk (text token) |
 | `llm.tool_call` | LLM invoked a tool (name + arguments) |
 | `llm.tool_result` | Tool execution result returned to LLM |
+
+#### History Management
+
+The server maintains conversation history per call. You can read, inject, clear, or update the system prompt mid-call using these `Call` methods:
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `call.getHistory()` | `Promise<Message[]>` | Fetch full conversation history (OpenAI format) |
+| `call.addHistory(messages)` | `Promise<number>` | Inject messages into history (e.g. CRM context) |
+| `call.clearHistory()` | `Promise<number>` | Clear history (system prompt preserved) |
+| `call.setInstructions(text)` | `Promise<number>` | Update system prompt mid-call |
+
+**Examples:**
+
+```typescript
+// Inject CRM context when call starts
+agent.on("call.started", async (call) => {
+  const customer = await db.findByPhone(call.from);
+  if (customer) {
+    await call.addHistory([
+      { role: "system", content: `Customer: ${customer.name}, Plan: ${customer.plan}` }
+    ]);
+  }
+});
+
+// Change personality mid-call
+await call.setInstructions("You are now a technical support agent. Be detailed.");
+
+// Read current history
+const messages = await call.getHistory();
+console.log(`${messages.length} messages in history`);
+
+// Reset conversation
+await call.clearHistory(); // keeps system prompt
+```
+
+All history methods use a request/response protocol (`history.get` → `history.data`, etc.) and return the updated message count.
 
 ---
 
