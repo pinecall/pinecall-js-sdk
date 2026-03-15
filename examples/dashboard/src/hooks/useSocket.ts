@@ -144,21 +144,25 @@ export function useSocket(): SocketState {
         break;
 
       // ─── User speech ────────────────────────────────────────────────
+      // Rule: update the SAME user bubble until turn.end finalizes it.
+      // After turn.end, new user.speaking creates a fresh bubble.
+      // After turn.pause (not end), user.speaking updates the same bubble.
       case 'user.speaking':
         if (data.text) {
           setMessages(prev => {
-            const msgs = [...prev];
-            const lastUser = msgs.findLast(m => m.role === 'user' && !m.finalized);
-            if (lastUser) {
-              lastUser.text = data.text;
-              lastUser.isInterim = true;
-            } else {
-              msgs.push({
-                id: Date.now(), role: 'user', text: data.text,
-                isInterim: true, turnId: data.turn_id,
-              });
+            const idx = prev.findLastIndex(m => m.role === 'user' && !m.finalized);
+            if (idx >= 0) {
+              // Update existing bubble — immutable
+              return prev.map((m, i) => i === idx
+                ? { ...m, text: data.text, isInterim: true, status: null }
+                : m
+              );
             }
-            return msgs;
+            // No active user bubble → create new
+            return [...prev, {
+              id: Date.now(), role: 'user' as const, text: data.text,
+              isInterim: true, turnId: data.turn_id,
+            }];
           });
         }
         setCallStatus('listening');
@@ -167,19 +171,17 @@ export function useSocket(): SocketState {
       case 'user.message':
         if (data.text) {
           setMessages(prev => {
-            const msgs = [...prev];
-            const lastUser = msgs.findLast(m => m.role === 'user' && !m.finalized);
-            if (lastUser) {
-              lastUser.text = data.text;
-              lastUser.isInterim = false;
-              lastUser.messageId = data.message_id;
-            } else {
-              msgs.push({
-                id: Date.now(), role: 'user', text: data.text,
-                isInterim: false, messageId: data.message_id,
-              });
+            const idx = prev.findLastIndex(m => m.role === 'user' && !m.finalized);
+            if (idx >= 0) {
+              return prev.map((m, i) => i === idx
+                ? { ...m, text: data.text, isInterim: false, messageId: data.message_id }
+                : m
+              );
             }
-            return msgs;
+            return [...prev, {
+              id: Date.now(), role: 'user' as const, text: data.text,
+              isInterim: false, messageId: data.message_id,
+            }];
           });
         }
         break;
@@ -187,30 +189,33 @@ export function useSocket(): SocketState {
       // ─── Turn detection ─────────────────────────────────────────────
       case 'turn.pause':
         setMessages(prev => {
-          const msgs = [...prev];
-          const u = msgs.findLast(m => m.role === 'user' && !m.finalized);
-          if (u) { u.status = 'pause'; u.probability = data.probability; u.isInterim = false; }
-          return msgs;
+          const idx = prev.findLastIndex(m => m.role === 'user' && !m.finalized);
+          if (idx < 0) return prev;
+          return prev.map((m, i) => i === idx
+            ? { ...m, status: 'pause' as const, probability: data.probability, isInterim: false }
+            : m
+          );
         });
         setCallStatus('pause');
         break;
 
       case 'turn.end':
         setMessages(prev => {
-          const msgs = [...prev];
-          const u = msgs.findLast(m => m.role === 'user' && !m.finalized);
-          if (u) { u.status = 'end'; u.probability = data.probability; u.finalized = true; u.isInterim = false; }
-          return msgs;
+          const idx = prev.findLastIndex(m => m.role === 'user' && !m.finalized);
+          if (idx < 0) return prev;
+          return prev.map((m, i) => i === idx
+            ? { ...m, status: 'end' as const, probability: data.probability, finalized: true, isInterim: false }
+            : m
+          );
         });
         setCallStatus('listening');
         break;
 
       case 'turn.resumed':
         setMessages(prev => {
-          const msgs = [...prev];
-          const u = msgs.findLast(m => m.role === 'user' && !m.finalized);
-          if (u) { u.status = null; }
-          return msgs;
+          const idx = prev.findLastIndex(m => m.role === 'user' && !m.finalized);
+          if (idx < 0) return prev;
+          return prev.map((m, i) => i === idx ? { ...m, status: null } : m);
         });
         setCallStatus('listening');
         break;
@@ -219,7 +224,7 @@ export function useSocket(): SocketState {
       case 'bot.speaking':
         if (data.message_id) {
           setMessages(prev => [...prev, {
-            id: Date.now(), role: 'bot', text: data.text || '',
+            id: Date.now(), role: 'bot' as const, text: data.text || '',
             messageId: data.message_id, speaking: true, words: [],
           }]);
           setCallStatus('speaking');
@@ -228,40 +233,34 @@ export function useSocket(): SocketState {
 
       case 'bot.word':
         if (data.message_id && data.word) {
-          setMessages(prev => {
-            const msgs = [...prev];
-            const botMsg = msgs.find(m => m.messageId === data.message_id);
-            if (botMsg) {
-              if (!botMsg.words) botMsg.words = [];
-              const idx = data.word_index ?? botMsg.words.length;
-              if (idx >= botMsg.words.length) botMsg.words.push(data.word);
-              botMsg.text = botMsg.words.join(' ');
-            }
-            return msgs;
-          });
+          setMessages(prev => prev.map(m => {
+            if (m.messageId !== data.message_id) return m;
+            const words = [...(m.words || [])];
+            const idx = data.word_index ?? words.length;
+            if (idx >= words.length) words.push(data.word);
+            return { ...m, words, text: words.join(' ') };
+          }));
         }
         break;
 
       case 'bot.finished':
         if (data.message_id) {
-          setMessages(prev => {
-            const msgs = [...prev];
-            const b = msgs.find(m => m.messageId === data.message_id);
-            if (b) { b.speaking = false; if (data.text) b.text = data.text; }
-            return msgs;
-          });
+          setMessages(prev => prev.map(m =>
+            m.messageId === data.message_id
+              ? { ...m, speaking: false, ...(data.text ? { text: data.text } : {}) }
+              : m
+          ));
           setCallStatus('listening');
         }
         break;
 
       case 'bot.interrupted':
         if (data.message_id) {
-          setMessages(prev => {
-            const msgs = [...prev];
-            const b = msgs.find(m => m.messageId === data.message_id);
-            if (b) { b.speaking = false; b.interrupted = true; }
-            return msgs;
-          });
+          setMessages(prev => prev.map(m =>
+            m.messageId === data.message_id
+              ? { ...m, speaking: false, interrupted: true }
+              : m
+          ));
           setCallStatus('listening');
         }
         break;
