@@ -62,7 +62,7 @@ import { GPTAgent, Phone } from "@pinecall/sdk/ai";
 class MyBot extends GPTAgent {
   model = "gpt-4.1-nano";
   phone = new Phone("+13186330963");
-  instructions = "You are a friendly receptionist. Be concise.";
+  prompt = "You are a friendly receptionist. Be concise.";
 }
 
 export default MyBot;
@@ -84,7 +84,7 @@ import { GPTAgent, Phone } from "@pinecall/sdk/ai";
 class Receptionist extends GPTAgent {
   model = "gpt-4.1-nano";
   phone = new Phone("+13186330963");
-  instructions = "You are a restaurant receptionist. Help guests book tables.";
+  prompt = "You are a restaurant receptionist. Help guests book tables.";
   greeting = "Hello! Welcome to La Bella. How can I help you today?";
 
   async bookTable({ date, guests, name }: { date: string; guests: number; name: string }) {
@@ -346,7 +346,7 @@ import { Agent, Phone } from "@pinecall/sdk/ai";
 
 class MyBot extends Agent {
   phone = new Phone("+13186330963");
-  instructions = "You are helpful.";
+  prompt = "You are helpful.";
   turnEvent = "turn.end"; // or "eager.turn" (default)
 
   async onTurn(turn, call, history) {
@@ -362,7 +362,8 @@ class MyBot extends Agent {
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `model` | `string` | — | LLM model (e.g., `"gpt-4.1-nano"`) |
-| `instructions` | `string \| ((call) => string \| Promise<string>)` | `"You are a helpful voice assistant."` | System prompt. Supports callbacks |
+| `prompt` | `string` | `"You are a helpful voice assistant."` | System prompt |
+| `promptFile` | `string` | — | Load system prompt from a file |
 | `greeting` | `string \| ((call) => string \| Promise<string>)` | — | Auto-spoken on call start. Supports async callbacks |
 | `voice` | `string \| object` | — | TTS voice (`"elevenlabs:id"` or config) |
 | `language` | `string` | — | Language code (`"en"`, `"es"`, `"fr"`, ...) |
@@ -397,7 +398,7 @@ import { GPTAgent, Phone } from "@pinecall/sdk/ai";
 class Sales extends GPTAgent {
   model = "gpt-4.1-nano";     // Always server-side
   phone = new Phone("+13186330963");
-  instructions = "You are a sales agent.";
+  prompt = "You are a sales agent.";
   greeting = "Hi! How can I help?";
   temperature = 0.7;
   maxTokens = 150;
@@ -473,36 +474,42 @@ The callback receives the full `Call` object with `call.from`, `call.to`, `call.
 
 #### Dynamic Instructions
 
-`instructions` also supports callbacks for per-call system prompts:
+#### Dynamic Prompt (onCallStarted)
+
+For dynamic per-call prompts, use `call.setPrompt()` or `call.setPromptFile()` inside `onCallStarted()`:
 
 ```typescript
 class MyBot extends GPTAgent {
   model = "gpt-4.1-nano";
+  prompt = "You are a helpful assistant."; // default fallback
 
-  // Personalize system prompt per caller
-  instructions = async (call) => {
+  async onCallStarted(call) {
     const user = await db.findByPhone(call.from);
-    return user
-      ? `You are helping ${user.name} (${user.plan} plan). Be friendly.`
-      : "You are a helpful assistant. Ask for their name first.";
-  };
+    if (user) {
+      await call.setPrompt(`You are helping ${user.name} (${user.plan} plan). Be friendly.`);
+      call.say(`Welcome back, ${user.name}!`);
+      await call.addHistory([
+        { role: "system", content: `Customer since ${user.created}` }
+      ]);
+    }
+  }
 }
 ```
 
-When `instructions` is a callback, a default prompt is sent at registration and `call.setInstructions()` is called automatically when the call starts.
+`onCallStarted` is the recommended hook for all per-call customization: prompt, greeting, history injection, and metadata.
 
 ---
 
 ### Server-Side LLM
 
-The Pinecall server can run LLM inference directly — the SDK only needs to define the model, instructions, and tools. This eliminates SDK round-trips for LLM calls and provides the lowest latency.
+The Pinecall server can run LLM inference directly — the SDK only needs to define the model, prompt, and tools. This eliminates SDK round-trips for LLM calls and provides the lowest latency.
 
 **Enable server-side LLM by setting `model`:**
 
 ```typescript
 class MyBot extends GPTAgent {
   model = "gpt-4.1-nano";            // enables server-side LLM
-  instructions = "You are a helpful receptionist.";
+  prompt = "You are a helpful receptionist.";
   greeting = "Hello! How can I help?";
   temperature = 0.7;                   // LLM temperature
   maxTokens = 150;                     // max response tokens
@@ -528,7 +535,8 @@ class CustomBot extends Agent {
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `model` | `string` | — | LLM model name (e.g., `"gpt-4.1-nano"`, `"gpt-4o-mini"`) |
-| `instructions` | `string \| ((call) => string \| Promise<string>)` | `"You are a helpful voice assistant."` | System prompt |
+| `prompt` | `string` | `"You are a helpful voice assistant."` | System prompt |
+| `promptFile` | `string` | — | Load prompt from file (e.g., `"./prompts/support.txt"`) |
 | `temperature` | `number` | — | Sampling temperature (0-2) |
 | `maxTokens` | `number` | — | Maximum response tokens |
 | `greeting` | `string \| ((call) => string \| Promise<string>)` | — | Auto-spoken on call start |
@@ -554,7 +562,8 @@ The server maintains conversation history per call. You can read, inject, clear,
 | `call.setHistory(messages)` | `Promise<number>` | Replace entire history (for restoring saved state) |
 | `call.addHistory(messages)` | `Promise<number>` | Inject messages into history (e.g. CRM context) |
 | `call.clearHistory()` | `Promise<number>` | Clear history (system prompt preserved) |
-| `call.setInstructions(text)` | `Promise<number>` | Update system prompt mid-call |
+| `call.setPrompt(text)` | `Promise<number>` | Update system prompt mid-call |
+| `call.setPromptFile(path)` | `Promise<number>` | Load prompt from file and set it |
 
 **Examples:**
 
@@ -570,7 +579,7 @@ agent.on("call.started", async (call) => {
 });
 
 // Change personality mid-call
-await call.setInstructions("You are now a technical support agent. Be detailed.");
+await call.setPrompt("You are now a technical support agent. Be detailed.");
 
 // Read current history
 const messages = await call.getHistory();
@@ -607,7 +616,7 @@ Define tools as class methods + register with `defineTool()`:
 ```typescript
 class Agent extends GPTAgent {
   model = "gpt-4.1-nano";
-  instructions = "You help book appointments.";
+  prompt = "You help book appointments.";
 
   async bookAppointment({ date, time }: { date: string; time: string }) {
     const result = await db.book(date, time);

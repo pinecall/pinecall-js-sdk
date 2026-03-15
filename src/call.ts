@@ -324,9 +324,23 @@ export class Call extends TypedEmitter<CallEvents> {
      * Update the system prompt mid-call.
      * Takes effect on the next LLM request.
      */
-    async setInstructions(instructions: string): Promise<number> {
-        const res = await this._request("history.set_instructions", "history.updated", { instructions });
+    async setPrompt(prompt: string): Promise<number> {
+        const res = await this._request("history.set_instructions", "history.updated", { instructions: prompt });
         return res.count ?? 0;
+    }
+
+    /**
+     * Load a prompt from a file and set it as the system prompt.
+     */
+    async setPromptFile(filePath: string): Promise<number> {
+        const fs = await import("fs");
+        const text = fs.readFileSync(filePath, "utf-8");
+        return this.setPrompt(text);
+    }
+
+    /** @deprecated Use setPrompt() instead. */
+    async setInstructions(instructions: string): Promise<number> {
+        return this.setPrompt(instructions);
     }
 
     // ── Internal: called by Pinecall client to route events ──────────────

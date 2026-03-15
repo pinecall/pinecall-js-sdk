@@ -13,7 +13,7 @@
  *
  * class MyBot extends Agent {
  *     phone = new Phone("+13186330963");
- *     instructions = "You are helpful.";
+ *     prompt = "You are helpful.";
  *
  *     async onTurn(turn, call, history) {
  *         call.reply("Hello!");
@@ -66,8 +66,10 @@ export class Agent {
     temperature?: number;
     /** Max response tokens (server-side). */
     maxTokens?: number;
-    /** System prompt sent to the server-side LLM. String or callback for per-call personalization. */
-    instructions: string | ((call: Call) => string | Promise<string>) = "You are a helpful voice assistant. Be concise.";
+    /** System prompt for server-side LLM. For dynamic per-call prompts, use call.setPrompt() in onCallStarted(). */
+    prompt = "You are a helpful voice assistant. Be concise.";
+    /** Load system prompt from a file (alternative to prompt). */
+    promptFile?: string;
     /** Fallback greeting (channel greeting takes priority). String or async callback for dynamic greetings. */
     greeting?: string | ((call: Call) => string | Promise<string>);
     /** Which turn event to respond on. Default: "eager.turn". */
@@ -119,13 +121,18 @@ export class Agent {
         if (this.turnDetection) cfg.turnDetection = this.turnDetection;
         if (this.interruption !== undefined) cfg.interruption = this.interruption;
 
-        // Server-side LLM: if model is set, send it + instructions + tools to server.
+        // Server-side LLM: if model is set, send it + prompt + tools to server.
         // Both GPTAgent (always) and Agent (when model is set) use server-side LLM.
         const useServerLLM = this._serverSideLLM || !!this.model;
         if (useServerLLM && this.model) {
             cfg.llm = this.model;
-            const instr = typeof this.instructions === "string" ? this.instructions : "You are a helpful voice assistant.";
-            if (instr) (cfg as any).instructions = instr;
+            // promptFile takes precedence over prompt
+            let promptText = this.prompt;
+            if (this.promptFile) {
+                const fs = require("fs");
+                promptText = fs.readFileSync(this.promptFile, "utf-8");
+            }
+            if (promptText) (cfg as any).instructions = promptText;
             const tools = this._getToolDefinitions();
             if (tools.length > 0) (cfg as any).tools = tools;
         }
@@ -299,12 +306,6 @@ export class Agent {
     /** @internal */
     private _wireEvents(): void {
         this._core.on("call.started", async (call) => {
-            // Resolve dynamic instructions
-            if (typeof this.instructions === "function") {
-                const resolved = await this.instructions(call);
-                if (resolved) await call.setInstructions(resolved);
-            }
-
             // Resolve dynamic greeting
             const raw = this._greetingForCall(call) ?? this.greeting;
             if (raw) {
