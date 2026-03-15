@@ -144,21 +144,24 @@ export function useSocket(): SocketState {
         break;
 
       // ─── User speech ────────────────────────────────────────────────
-      // Rule: update the SAME user bubble until turn.end finalizes it.
-      // After turn.end, new user.speaking creates a fresh bubble.
-      // After turn.pause (not end), user.speaking updates the same bubble.
+      // Merge rule: update the SAME user bubble as long as no bot/system
+      // message has appeared after it. This correctly merges consecutive
+      // user turns (native turn detection finalizes immediately) into
+      // one bubble until the bot actually responds.
       case 'user.speaking':
         if (data.text) {
           setMessages(prev => {
-            const idx = prev.findLastIndex(m => m.role === 'user' && !m.finalized);
-            if (idx >= 0) {
-              // Update existing bubble — immutable
-              return prev.map((m, i) => i === idx
-                ? { ...m, text: data.text, isInterim: true, status: null }
+            // Find last user msg that has no bot/system message after it
+            const lastIdx = prev.findLastIndex(m => m.role === 'user');
+            const hasResponseAfter = lastIdx >= 0 && prev.slice(lastIdx + 1).some(m => m.role !== 'user');
+            if (lastIdx >= 0 && !hasResponseAfter) {
+              // Update existing bubble — even if finalized, re-open it
+              return prev.map((m, i) => i === lastIdx
+                ? { ...m, text: data.text, isInterim: true, status: null, finalized: false, turnId: data.turn_id }
                 : m
               );
             }
-            // No active user bubble → create new
+            // Bot spoke in between → create new user bubble
             return [...prev, {
               id: Date.now(), role: 'user' as const, text: data.text,
               isInterim: true, turnId: data.turn_id,
@@ -171,9 +174,10 @@ export function useSocket(): SocketState {
       case 'user.message':
         if (data.text) {
           setMessages(prev => {
-            const idx = prev.findLastIndex(m => m.role === 'user' && !m.finalized);
-            if (idx >= 0) {
-              return prev.map((m, i) => i === idx
+            const lastIdx = prev.findLastIndex(m => m.role === 'user');
+            const hasResponseAfter = lastIdx >= 0 && prev.slice(lastIdx + 1).some(m => m.role !== 'user');
+            if (lastIdx >= 0 && !hasResponseAfter) {
+              return prev.map((m, i) => i === lastIdx
                 ? { ...m, text: data.text, isInterim: false, messageId: data.message_id }
                 : m
               );
@@ -189,8 +193,8 @@ export function useSocket(): SocketState {
       // ─── Turn detection ─────────────────────────────────────────────
       case 'turn.pause':
         setMessages(prev => {
-          const idx = prev.findLastIndex(m => m.role === 'user' && !m.finalized);
-          if (idx < 0) return prev;
+          const idx = prev.findLastIndex(m => m.role === 'user');
+          if (idx < 0 || prev.slice(idx + 1).some(m => m.role !== 'user')) return prev;
           return prev.map((m, i) => i === idx
             ? { ...m, status: 'pause' as const, probability: data.probability, isInterim: false }
             : m
@@ -201,8 +205,8 @@ export function useSocket(): SocketState {
 
       case 'turn.end':
         setMessages(prev => {
-          const idx = prev.findLastIndex(m => m.role === 'user' && !m.finalized);
-          if (idx < 0) return prev;
+          const idx = prev.findLastIndex(m => m.role === 'user');
+          if (idx < 0 || prev.slice(idx + 1).some(m => m.role !== 'user')) return prev;
           return prev.map((m, i) => i === idx
             ? { ...m, status: 'end' as const, probability: data.probability, finalized: true, isInterim: false }
             : m
@@ -213,9 +217,9 @@ export function useSocket(): SocketState {
 
       case 'turn.resumed':
         setMessages(prev => {
-          const idx = prev.findLastIndex(m => m.role === 'user' && !m.finalized);
-          if (idx < 0) return prev;
-          return prev.map((m, i) => i === idx ? { ...m, status: null } : m);
+          const idx = prev.findLastIndex(m => m.role === 'user');
+          if (idx < 0 || prev.slice(idx + 1).some(m => m.role !== 'user')) return prev;
+          return prev.map((m, i) => i === idx ? { ...m, status: null, finalized: false } : m);
         });
         setCallStatus('listening');
         break;
