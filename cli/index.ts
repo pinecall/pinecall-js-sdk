@@ -14,32 +14,23 @@ const HELP = `
   ${chalk.bold("Usage:")} pinecall <command> [options]
 
   ${chalk.bold("Commands:")}
-    run <agent>         Run an agent file (dev mode with TUI)
-    server <agent|dir>  Start headless server (REST + WS)
-    agent               Start an inbound voice agent
-    dial <number>       Make an outbound call
-    test                Run a connectivity smoke test
+    console <agent>     Interactive agent console (dev mode with TUI)
+    server <agent|dir>  Start headless server (REST + WS + Dashboard)
     help                Show this help message
-
-  ${chalk.bold("Options:")}
-    --es                Use Spanish preset (shortcut for --lang=es)
-    --lang=<code>       Language preset (en, es)
-    --from=<number>     Caller ID for dial command
 
   ${chalk.bold("Environment:")}
     PINECALL_API_KEY    ${chalk.dim("(required)")} Your Pinecall API key
-    OPENAI_API_KEY      ${chalk.dim("(required for agent/dial)")} Your OpenAI API key
+    OPENAI_API_KEY      ${chalk.dim("(required for agent)")} Your OpenAI API key
     PINECALL_URL        ${chalk.dim("(optional)")} Custom WebSocket URL
 
   ${chalk.bold("Examples:")}
-    ${chalk.dim("$")} pinecall run Agent.js
-    ${chalk.dim("$")} pinecall run ./agents
-    ${chalk.dim("$")} pinecall server Agent.js --api-port=3000
+    ${chalk.dim("$")} pinecall console Agent.js
+    ${chalk.dim("$")} pinecall console ./agents
+    ${chalk.dim("$")} pinecall server Agent.js
     ${chalk.dim("$")} pinecall server ./agents
-    ${chalk.dim("$")} pinecall dial +12025551234
-    ${chalk.dim("$")} pinecall test
+    ${chalk.dim("$")} pinecall server --disable-ui
 
-  ${chalk.bold("In-CLI commands:")} /phones /voices /dial /config /help
+  ${chalk.bold("Console Commands:")} /phones /voices /dial /config /hold /mute /history /help
 `;
 
 async function main(): Promise<void> {
@@ -61,7 +52,8 @@ async function main(): Promise<void> {
             console.error(`  ${chalk.dim("ℹ")} ${chalk.dim(`"${command}" moved to interactive CLI. Use /${command} inside pinecall run.`)}`);
             return;
 
-        case "run":
+        case "console":
+        case "run":  // kept as alias
             return (await import("./commands/run.js")).run(argv);
 
         case "server":

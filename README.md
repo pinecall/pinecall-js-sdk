@@ -24,16 +24,14 @@ npm install @pinecall/sdk
   - [Tool Calling](#tool-calling)
   - [ConversationHistory](#conversationhistory)
 - [CLI](#cli)
-  - [`pinecall run`](#pinecall-run)
+  - [`pinecall console`](#pinecall-console)
   - [`pinecall server`](#pinecall-server)
-  - [`pinecall dial`](#pinecall-dial)
-  - [`pinecall agent`](#pinecall-agent)
-  - [`pinecall test`](#pinecall-test)
 - [Server (`@pinecall/sdk/server`)](#server)
   - [EventServer](#eventserver)
   - [REST API](#rest-api)
   - [WebSocket Commands](#websocket-commands)
   - [WebSocket Events](#websocket-events)
+  - [Authentication](#authentication)
   - [Dashboard UI](#dashboard-ui)
 - [Configuration Reference](#configuration-reference)
   - [Agent Config](#agent-config)
@@ -45,6 +43,7 @@ npm install @pinecall/sdk
   - [Analysis](#analysis)
   - [Session Config](#session-config)
   - [`pinecall.config.json`](#pinecallconfigjson)
+- [Agent Database (Beta)](#agent-database-beta)
 - [Environment Variables](#environment-variables)
 - [Events Reference](#events-reference)
 
@@ -70,8 +69,8 @@ Run it:
 
 ```bash
 export PINECALL_API_KEY=pk_...
-pinecall run MyBot.ts          # Dev mode with interactive TUI
-pinecall server MyBot.ts       # Production headless server + Dashboard
+pinecall console MyBot.ts      # Interactive console with TUI
+pinecall server MyBot.ts       # Production server + Dashboard UI
 ```
 
 ### 2. Agent with Tools
@@ -86,7 +85,6 @@ class Receptionist extends GPTAgent {
   greeting = "Hello! Welcome to La Bella. How can I help you today?";
 
   async bookTable({ date, guests, name }: { date: string; guests: number; name: string }) {
-    // Your booking logic here
     return { confirmed: true, date, guests, name, table: "A12" };
   }
 }
@@ -100,28 +98,23 @@ Receptionist.defineTool("bookTable", "Book a table at the restaurant", {
 export default Receptionist;
 ```
 
-### 3. Declarative Config (No Code)
+### 3. Server Mode with Config File
 
-Create `pinecall.json`:
+Create `pinecall.config.json` to configure the server:
 
 ```json
 {
-  "agents": [
-    {
-      "name": "receptionist",
-      "model": "gpt-4.1-nano",
-      "phone": "+13186330963",
-      "voice": "elevenlabs:JBFqnCBsd6RMkjVDRZzb",
-      "language": "en",
-      "instructions": "You are a helpful receptionist.",
-      "greeting": "Hello! How can I help you?"
-    }
-  ]
+  "port": 4100,
+  "host": "0.0.0.0",
+  "ui": true,
+  "agentsDir": "./agents"
 }
 ```
 
 ```bash
-pinecall server   # auto-detects pinecall.json
+pinecall server              # starts server, loads agents from ./agents/
+pinecall server ./agents     # explicit agents directory
+pinecall server --disable-ui # API only, no Dashboard
 ```
 
 ---
@@ -131,7 +124,7 @@ pinecall server   # auto-detects pinecall.json
 ```
 ┌──────────────────────────────────────────────────────────┐
 │                      Your Agent Code                      │
-│  (GPTAgent subclass, Agent subclass, or pinecall.json)    │
+│  (GPTAgent subclass, Agent subclass, or dynamic API)      │
 ├──────────────────────────────────────────────────────────┤
 │              @pinecall/sdk/ai (Agent, GPTAgent)           │
 │         onTurn() hook • tool calling • history            │
@@ -167,10 +160,10 @@ The connection manager. Handles WebSocket auth, reconnection, ping/pong, and mul
 import { Pinecall } from "@pinecall/sdk";
 
 const pc = new Pinecall({
-  apiKey: "pk_...",           // required
-  url: "wss://...",           // optional, default: wss://voice.pinecall.io/client
-  reconnect: true,            // true (default) | false | ReconnectOptions
-  pingInterval: 30000,        // ms, default: 30000. Set 0 to disable
+  apiKey: "pk_...",
+  url: "wss://...",           // optional custom URL
+  reconnect: true,            // true | false | ReconnectOptions
+  pingInterval: 30000,        // ms, 0 to disable
 });
 
 await pc.connect();
@@ -210,14 +203,17 @@ await pc.disconnect();
 | `maxDelay` | `number` | `30000` | Max retry delay (ms) |
 | `backoffMultiplier` | `number` | `2` | Exponential backoff factor |
 
-#### Static Methods
+#### Utility Methods
 
 ```typescript
-// Fetch available voices
+// Static — fetch voices (no connection required)
 const voices = await Pinecall.fetchVoices({ provider: "elevenlabs" });
 
-// Fetch available phone numbers
+// Static — fetch phone numbers (requires apiKey)
 const phones = await Pinecall.fetchPhones({ apiKey: "pk_..." });
+
+// Instance — fetch phones using the client's apiKey
+const phones = await pc.fetchPhones();
 ```
 
 ---
@@ -240,7 +236,6 @@ const agent = pc.agent("my-agent", {
 agent.addChannel("phone", "+19035551234");
 agent.addChannel("phone", "+19035555678", { voice: "cartesia:xyz" });
 agent.addChannel("webrtc");
-agent.addChannel("mic");
 
 // Dial outbound
 const call = await agent.dial({ to: "+12025551234", from: "+19035551234" });
@@ -262,15 +257,11 @@ Per-session handle for interacting with a voice call. Created automatically on `
 ```typescript
 agent.on("call.started", (call) => {
   console.log(`Call ${call.id} from ${call.from} to ${call.to} (${call.direction})`);
-
-  // Greeting
   call.say("Hello! How can I help you?");
 });
 
 agent.on("turn.end", (turn, call) => {
   console.log(`User said: "${turn.text}" (confidence: ${turn.confidence})`);
-
-  // Reply to latest user message (auto-tracks in_reply_to)
   call.reply("Sure, let me check that for you.");
 });
 ```
@@ -321,7 +312,6 @@ Streaming reply — write tokens incrementally, TTS speaks as tokens arrive.
 agent.on("turn.end", async (turn, call) => {
   const stream = call.replyStream(turn);
 
-  // Stream from LLM
   for await (const chunk of llmStream) {
     stream.write(chunk.text);
   }
@@ -339,7 +329,7 @@ agent.on("turn.end", async (turn, call) => {
 
 ## AI Agents
 
-High-level agent classes that handle connection, channels, conversation history, and the LLM loop.
+High-level agent classes that handle connection, channels, history, and the LLM loop.
 
 ```typescript
 import { Agent, GPTAgent, Phone, WebRTC, Channel } from "@pinecall/sdk/ai";
@@ -358,10 +348,7 @@ class MyBot extends Agent {
   turnEvent = "turn.end"; // or "eager.turn" (default)
 
   async onTurn(turn, call, history) {
-    // Call your LLM
     const response = await myLLM(history.toMessages());
-
-    // Reply
     call.reply(response);
     history.addAssistant(response);
   }
@@ -400,7 +387,7 @@ class MyBot extends Agent {
 
 ### GPTAgent
 
-Extends `Agent` with server-side OpenAI integration. The server handles LLM calls directly — zero SDK round-trips.
+Extends `Agent` with server-side OpenAI integration. The server handles LLM calls — zero SDK round-trips.
 
 ```typescript
 import { GPTAgent, Phone } from "@pinecall/sdk/ai";
@@ -426,15 +413,12 @@ export default Sales;
 ```typescript
 import { Phone, WebRTC, Channel } from "@pinecall/sdk/ai";
 
-// Phone channel
+// Phone channel with per-channel config
 const phone = new Phone("+13186330963");
 phone.voice = "elevenlabs:JBFqnCBsd6RMkjVDRZzb";
 phone.greeting = "Hello from this number!";
 
-// WebRTC channel
-const webrtc = new WebRTC();
-
-// Multiple channels
+// Multiple channels on one agent
 class Multi extends GPTAgent {
   model = "gpt-4.1-nano";
   channels = [
@@ -492,6 +476,8 @@ Agent.defineTool("getWeather", "Get current weather", {
 
 Tool parameters follow [JSON Schema](https://json-schema.org/) format. The return value is sent back to the LLM as the tool result.
 
+**Tool call events** (`llm.tool_call`, `llm.tool_result`) are streamed to the Dashboard UI and WebSocket clients in real-time, so you can observe tool invocations and their results live.
+
 ---
 
 ### ConversationHistory
@@ -500,10 +486,8 @@ Automatically tracks conversation messages. Available in `onTurn()`:
 
 ```typescript
 async onTurn(turn, call, history) {
-  // Access messages
   const messages = history.toMessages(); // OpenAI-compatible format
 
-  // Manual management
   history.addUser("User said this");
   history.addAssistant("Bot replied this");
   history.addSystem("System note");
@@ -518,24 +502,60 @@ async onTurn(turn, call, history) {
 npm install -g @pinecall/sdk   # or use npx
 ```
 
-### `pinecall run`
+### `pinecall console`
 
-Run an agent in **dev mode** with an interactive TUI (terminal UI).
+Interactive agent console with a TUI (Terminal User Interface) for development.
 
 ```bash
-pinecall run MyBot.ts                          # single file
-pinecall run ./agents/                         # directory of agents
-pinecall run MyBot.ts --port=4200              # custom port
-pinecall run MyBot.ts --es                     # Spanish preset
-pinecall run MyBot.ts --lang=fr                # French preset
+pinecall console MyBot.ts           # single agent file
+pinecall console ./agents/          # directory of agents
+pinecall console MyBot.ts --dial=+12025551234  # auto-dial on start
+pinecall console MyBot.ts --phone=+13186330963 # specify phone
 ```
 
 **TUI Features:**
 - Live conversation view (user/bot bubbles)
-- LLM pane (streaming responses)
+- LLM response pane
 - Audio waveform
-- In-CLI commands: `/phones`, `/voices`, `/dial`, `/config`, `/help`
-- Keyboard shortcuts: `Ctrl+O` command palette, `Ctrl+T` text input, `Ctrl+Y` copy
+- Interactive command prompt
+
+#### Console Commands
+
+Once inside the console, use `/` commands:
+
+| Command | Args | Description |
+|---------|------|-------------|
+| `/help` | | Show all available commands |
+| `/phones` | | List available phone numbers |
+| `/voices` | `[provider]` | List TTS voices (default: elevenlabs) |
+| `/play` | `<name\|id> [provider]` | Play a voice preview |
+| `/dial` | `[agent] +number ["greeting"]` | Make an outbound call |
+| `/calls` | | List active calls |
+| `/switch` | `<number\|sid>` | Select active call (multi-call) |
+| `/config` | `<voice\|stt\|turn\|lang> <val>` | Change call config mid-call |
+| `/hangup` | | Hang up selected call (or all) |
+| `/hold` | | Put selected call on hold |
+| `/unhold` | | Resume held call |
+| `/mute` | | Mute microphone |
+| `/unmute` | | Unmute microphone |
+| `/history` | | Show raw LLM conversation history (JSON) |
+
+**Config examples:**
+
+```
+/config voice elevenlabs:JBFqnCBsd6RMkjVDRZzb
+/config stt deepgram:nova-3:es
+/config turn smart_turn 600
+/config lang fr
+```
+
+**Dial examples:**
+
+```
+/dial +12025551234
+/dial sales +12025551234
+/dial sales +12025551234 "Hello, this is support."
+```
 
 ---
 
@@ -546,7 +566,7 @@ Start a headless production server with REST API, WebSocket events, and Dashboar
 ```bash
 pinecall server MyBot.ts                       # single agent file
 pinecall server ./agents/                      # directory of agents
-pinecall server                                # auto-detect pinecall.json
+pinecall server                                # auto-detect pinecall.config.json
 pinecall server --config=custom.json           # custom config file
 pinecall server --port=4100                    # custom port (default: 4100)
 pinecall server --host=0.0.0.0                 # bind address (default: 0.0.0.0)
@@ -557,40 +577,8 @@ pinecall server --disable-ui                   # disable Dashboard UI
 - REST API for agent management and call control
 - WebSocket for real-time events and commands
 - Built-in Dashboard UI (auto-opens in browser)
-- Config persistence with `pinecall.json`
-- Hot-deploy agents via POST `/agents`
-
----
-
-### `pinecall dial`
-
-Make an outbound call.
-
-```bash
-pinecall dial +12025551234                     # dial a number
-pinecall dial +12025551234 --from=+13186330963 # specify caller ID
-```
-
----
-
-### `pinecall agent`
-
-Start a simple inbound voice agent.
-
-```bash
-pinecall agent                                 # start with defaults
-pinecall agent --es                            # Spanish mode
-```
-
----
-
-### `pinecall test`
-
-Run a connectivity smoke test.
-
-```bash
-pinecall test
-```
+- Dynamic agent deployment via POST `/agents`
+- Config-driven with `pinecall.config.json`
 
 ---
 
@@ -604,22 +592,17 @@ The server component that bridges your agents with external clients via REST and
 import { EventServer } from "@pinecall/sdk/server";
 
 const server = new EventServer({
-  port: 4100,              // default: 4100
-  host: "0.0.0.0",         // default: "127.0.0.1"
-  pinecall: pc,            // Pinecall client instance
-  ui: true,                // serve Dashboard UI (default: true)
-  requireAuth: false,      // require Bearer token (default: false)
-  allowedOrigins: null,    // CORS origins (default: allow all)
+  port: 4100,
+  host: "0.0.0.0",
+  pinecall: pc,
+  ui: true,
+  requireAuth: false,
+  allowedOrigins: null,
 });
 
-// Attach agents
 const token = server.attach(agent);
 console.log("Agent token:", token);
 
-// Detach agents
-server.detach(agent);
-
-// Start
 server.start();
 ```
 
@@ -629,10 +612,10 @@ server.start();
 |--------|------|---------|-------------|
 | `port` | `number` | `4100` | Server port |
 | `host` | `string` | `"127.0.0.1"` | Bind address |
-| `pinecall` | `Pinecall` | — | Client instance (needed for REST) |
+| `pinecall` | `Pinecall` | — | Client instance (needed for REST deploy) |
 | `ui` | `boolean` | `true` | Serve built-in Dashboard UI |
-| `requireAuth` | `boolean` | `false` | Require token auth for WS |
-| `allowedOrigins` | `string[]` | `null` | Restrict CORS origins |
+| `requireAuth` | `boolean` | `false` | Require Bearer token for WS and REST |
+| `allowedOrigins` | `string[]` | `null` | Restrict CORS origins (`null` = allow all) |
 
 ---
 
@@ -644,18 +627,24 @@ All endpoints return JSON. Base URL: `http://localhost:4100`
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/agents` | List all agents (with config) |
-| `POST` | `/agents` | Deploy a new agent |
+| `GET` | `/agents` | List all agents (includes config) |
+| `POST` | `/agents` | Deploy a new agent dynamically |
 | `PATCH` | `/agents/:name` | Configure an agent |
 | `DELETE` | `/agents/:name` | Remove an agent |
 | `POST` | `/agents/:name/dial` | Make an outbound call |
 
-**POST /agents** — Deploy agent:
+**POST /agents** — Deploy agent dynamically:
 
 ```bash
 curl -X POST http://localhost:4100/agents \
   -H "Content-Type: application/json" \
-  -d '{"name":"sales","model":"gpt-4.1-nano","phone":"+13186330963","instructions":"You are a sales bot."}'
+  -d '{
+    "name": "sales",
+    "model": "gpt-4.1-nano",
+    "phone": "+13186330963",
+    "instructions": "You are a sales bot.",
+    "voice": "elevenlabs:JBFqnCBsd6RMkjVDRZzb"
+  }'
 ```
 
 **POST /agents/:name/dial** — Outbound call:
@@ -663,10 +652,10 @@ curl -X POST http://localhost:4100/agents \
 ```bash
 curl -X POST http://localhost:4100/agents/sales/dial \
   -H "Content-Type: application/json" \
-  -d '{"to":"+12025551234","from":"+13186330963","greeting":"Hello!"}'
+  -d '{"to": "+12025551234", "from": "+13186330963", "greeting": "Hello!"}'
 ```
 
-**GET /agents** — List agents (includes config):
+**GET /agents** response:
 
 ```json
 {
@@ -693,14 +682,6 @@ curl -X POST http://localhost:4100/agents/sales/dial \
 | `PATCH` | `/calls/:id` | Configure a call mid-session |
 | `POST` | `/calls/:id/hangup` | Hang up a call |
 
-**PATCH /calls/:id** — Configure mid-call:
-
-```bash
-curl -X PATCH http://localhost:4100/calls/CA_abc123 \
-  -H "Content-Type: application/json" \
-  -d '{"voice":"cartesia:xyz","language":"es"}'
-```
-
 #### Other
 
 | Method | Endpoint | Description |
@@ -715,18 +696,11 @@ curl -X PATCH http://localhost:4100/calls/CA_abc123 \
 
 Connect to `ws://localhost:4100` and send JSON commands.
 
-#### Connection
-
-Authenticate with a token on connect:
-
-```json
-{ "action": "auth", "token": "tok_..." }
-```
-
 #### Agent & Call Commands
 
 | Action | Payload | Description |
 |--------|---------|-------------|
+| `auth` | `{ token }` | Authenticate (required if `requireAuth` is on) |
 | `dial` | `{ agent_id, to, from, greeting? }` | Outbound call |
 | `hangup` | `{ call_id }` | End a call |
 | `configure` | `{ call_id, ...config }` | Configure call |
@@ -745,11 +719,10 @@ Authenticate with a token on connect:
 { "action": "dtmf", "call_id": "CA_abc123", "digits": "123#" }
 ```
 
-**Responses:**
+**Response:**
 
 ```json
 { "event": "action.ok", "action": "dtmf", "call_id": "CA_abc123" }
-{ "event": "error", "action": "dtmf", "message": "Call not found: CA_xyz" }
 ```
 
 ---
@@ -758,59 +731,96 @@ Authenticate with a token on connect:
 
 Events are broadcast to connected clients in real-time.
 
-#### Connection Lifecycle
+#### Connection
 
-| Event | Data | Description |
-|-------|------|-------------|
-| `server.connected` | `{}` | SDK connected to cloud |
-| `server.disconnected` | `{}` | SDK lost connection |
-| `server.reconnecting` | `{}` | SDK reconnecting |
+| Event | Description |
+|-------|-------------|
+| `server.connected` | SDK connected to Pinecall cloud |
+| `server.disconnected` | SDK lost connection |
+| `server.reconnecting` | SDK reconnecting |
 
 #### Call Lifecycle
 
-| Event | Data | Description |
-|-------|------|-------------|
-| `call.started` | `{ call_id, agent_id, from, to, direction }` | Call began |
-| `call.ended` | `{ call_id, agent_id, reason }` | Call ended |
+| Event | Key Data | Description |
+|-------|----------|-------------|
+| `call.started` | `call_id, agent_id, from, to, direction` | Call began |
+| `call.ended` | `call_id, agent_id, reason` | Call ended |
 
 #### Speech & Turn
 
-| Event | Data | Description |
-|-------|------|-------------|
-| `speech.started` | `{ call_id }` | User started speaking |
-| `speech.ended` | `{ call_id }` | User stopped speaking |
-| `user.speaking` | `{ call_id, text }` | Interim transcript |
-| `user.message` | `{ call_id, message_id, text, confidence }` | Final transcript |
-| `eager.turn` | `{ call_id, turn_id, message_id, text }` | Early turn (before confirmed) |
-| `turn.pause` | `{ call_id, turn_id }` | Turn paused (silence) |
-| `turn.end` | `{ call_id, turn_id, message_id, text, confidence }` | Confirmed turn end |
-| `turn.resumed` | `{ call_id, turn_id }` | User continued speaking |
-| `turn.continued` | `{ call_id, turn_id }` | Turn continues after pause |
+| Event | Key Data | Description |
+|-------|----------|-------------|
+| `speech.started` | `call_id` | User started speaking |
+| `speech.ended` | `call_id` | User stopped speaking |
+| `user.speaking` | `call_id, text` | Interim transcript |
+| `user.message` | `call_id, message_id, text, confidence` | Final transcript |
+| `eager.turn` | `call_id, turn_id, message_id, text` | Early turn (before confirmed) |
+| `turn.pause` | `call_id, turn_id` | Turn paused |
+| `turn.end` | `call_id, turn_id, message_id, text, confidence` | Confirmed turn end |
+| `turn.resumed` | `call_id, turn_id` | User continued speaking |
+| `turn.continued` | `call_id, turn_id` | Turn continues after pause |
 
 #### Bot
 
-| Event | Data | Description |
-|-------|------|-------------|
-| `bot.speaking` | `{ call_id, message_id }` | Bot started speaking |
-| `bot.word` | `{ call_id, message_id, word, index }` | Word-level TTS sync |
-| `bot.finished` | `{ call_id, message_id }` | Bot finished speaking |
-| `bot.interrupted` | `{ call_id, message_id }` | Bot was interrupted |
-| `message.confirmed` | `{ call_id, message_id }` | Message delivery confirmed |
-| `reply.rejected` | `{ call_id, message_id, reason }` | Reply was rejected |
+| Event | Key Data | Description |
+|-------|----------|-------------|
+| `bot.speaking` | `call_id, message_id` | Bot started speaking |
+| `bot.word` | `call_id, message_id, word, index` | Word-level TTS sync |
+| `bot.finished` | `call_id, message_id` | Bot finished speaking |
+| `bot.interrupted` | `call_id, message_id` | Bot was interrupted |
+| `message.confirmed` | `call_id, message_id` | Message delivery confirmed |
+| `reply.rejected` | `call_id, message_id, reason` | Reply was rejected |
+
+#### LLM & Tool Calling
+
+| Event | Key Data | Description |
+|-------|----------|-------------|
+| `llm.stream` | `call_id, msg_id, text` | LLM streaming response chunk |
+| `llm.tool_call` | `call_id, tool_name, arguments` | Tool invocation by LLM |
+| `llm.tool_result` | `call_id, tool_name, result` | Tool execution result |
+
+Tool call events are streamed to the Dashboard UI and WebSocket clients in real-time.
 
 #### Analysis
 
-| Event | Data | Description |
-|-------|------|-------------|
-| `audio.metrics` | `{ call_id, rms, peak, energy_db, is_speech, vad_prob }` | Audio analytics |
+| Event | Key Data | Description |
+|-------|----------|-------------|
+| `audio.metrics` | `call_id, rms, peak, energy_db, is_speech, vad_prob` | Audio analytics |
 
 #### Channel
 
-| Event | Data | Description |
-|-------|------|-------------|
-| `channel.added` | `{ agent_id, type, ref }` | Channel registered |
-| `channel.configured` | `{ agent_id, ref }` | Channel configured |
-| `channel.removed` | `{ agent_id, ref }` | Channel removed |
+| Event | Key Data | Description |
+|-------|----------|-------------|
+| `channel.added` | `agent_id, type, ref` | Channel registered |
+| `channel.configured` | `agent_id, ref` | Channel configured |
+| `channel.removed` | `agent_id, ref` | Channel removed |
+
+---
+
+### Authentication
+
+When `requireAuth: true`, all REST and WebSocket requests must include a Bearer token:
+
+**REST:**
+
+```bash
+curl -H "Authorization: Bearer tok_..." http://localhost:4100/agents
+```
+
+**WebSocket:**
+
+```json
+{ "action": "auth", "token": "tok_..." }
+```
+
+Tokens are generated when agents are attached to the EventServer:
+
+```typescript
+const token = server.attach(agent);
+// Use this token for authenticated requests
+```
+
+Each agent gets its own token. Tokens scope access — a client authenticated with an agent's token can only interact with that agent's calls and events. Without auth, the token can optionally be passed via the `Authorization: Bearer <token>` header on WebSocket upgrade for scoped access.
 
 ---
 
@@ -819,13 +829,14 @@ Events are broadcast to connected clients in real-time.
 The SDK includes a built-in Dashboard UI served by EventServer at `http://localhost:4100`.
 
 **Features:**
-- Real-time connection status
-- Agent list with config display (model, voice, language, STT, instructions)
-- Live conversation view with user/bot message bubbles
-- Active call controls: DTMF keypad, Forward, Hold, Mute, Hangup
+- Real-time connection status indicator
+- Agent list with collapsible config display (model, voice, language, STT, instructions)
+- Live conversation view with user/bot message bubbles & word-level sync
+- Call controls: DTMF keypad, Forward, Hold, Mute, Hangup
+- Live tool call invocations and results
 - Audio waveform visualization
 - Outbound dialer with phone keypad
-- Event log with JSON detail modal
+- Event log with JSON detail view
 - Phone numbers list
 
 **Disable:**
@@ -899,7 +910,7 @@ const agent = pc.agent("bot", {
 ```typescript
 stt: {
   provider: "deepgram",
-  model: "nova-3",              // default
+  model: "nova-3",
   language: "en",
   interim_results: true,
   smart_format: true,
@@ -932,14 +943,14 @@ stt: {
 // Shortcut: "deepgram-flux" or "flux"
 ```
 
-> **Note:** When using Deepgram Flux in native mode, `eager.turn` events are deferred until the `turn.end` confirmation is received. This prevents premature LLM invocation on partial transcripts.
+> **Note:** When using Deepgram Flux in native mode, `eager.turn` events are deferred until the `turn.end` confirmation to prevent premature LLM invocation on partial transcripts. Use `turnEvent: "eager.turn"` (the default) for the best experience with Flux.
 
 #### Gladia
 
 ```typescript
 stt: {
   provider: "gladia",
-  model: "accurate",             // or "fast"
+  model: "accurate",
   language: "en",
   endpointing: 300,
   max_duration_without_endpointing: 5000,
@@ -1006,7 +1017,7 @@ voice: {
 voice: {
   provider: "polly",
   voice_id: "Joanna",
-  engine: "neural",          // or "standard"
+  engine: "neural",
   language: "en-US",
   rate: null,
   volume: null,
@@ -1038,8 +1049,8 @@ config: {
 
 ```typescript
 turnDetection: {
-  mode: "smart_turn",         // "smart_turn" | "native" | "silence"
-  smart_turn_threshold: 0.5,  // sensitivity (0-1, lower = faster)
+  mode: "smart_turn",
+  smart_turn_threshold: 0.5,  // 0-1, lower = faster response
   native_silence_ms: 500,     // for native mode
   max_silence_seconds: 2,     // for silence mode
 }
@@ -1060,8 +1071,8 @@ turnDetection: {
 ```typescript
 interruption: {
   enabled: true,
-  energy_threshold_db: -40,    // minimum audio energy to interrupt
-  min_duration_ms: 200,        // minimum speech duration to interrupt
+  energy_threshold_db: -40,
+  min_duration_ms: 200,
 }
 
 // Shortcut: false (disables interruption)
@@ -1074,10 +1085,10 @@ interruption: {
 ```typescript
 config: {
   analysis: {
-    send_audio_metrics: true,       // emit audio.metrics events
-    audio_metrics_interval_ms: 100, // metrics interval
-    send_turn_audio: false,         // include raw audio in turn events
-    send_bot_audio: false,          // include bot audio data
+    send_audio_metrics: true,
+    audio_metrics_interval_ms: 100,
+    send_turn_audio: false,
+    send_bot_audio: false,
   }
 }
 ```
@@ -1091,8 +1102,8 @@ Full `config` object passed via `agent.configure()` or `call.configure()`:
 ```typescript
 {
   config: {
-    stt: { /* STT provider config */ },
-    tts: { /* TTS provider config */ },
+    stt: { /* STT config */ },
+    tts: { /* TTS config */ },
     vad: { /* VAD config */ },
     turn_detection: { /* Turn detection config */ },
     interruption: { /* Interruption config */ },
@@ -1110,37 +1121,14 @@ Full `config` object passed via `agent.configure()` or `call.configure()`:
 
 ### `pinecall.config.json`
 
-Server configuration file. Auto-detected in the current directory.
+Server configuration file. Auto-detected in the current directory. **This file configures the server only** — it does not define agents (see [Agent Database](#agent-database-beta) for dynamic agents).
 
 ```json
 {
   "port": 4100,
   "host": "0.0.0.0",
   "ui": true,
-  "agentsDir": "./agents",
-  "agents": [
-    {
-      "name": "receptionist",
-      "model": "gpt-4.1-nano",
-      "phone": "+13186330963",
-      "voice": "elevenlabs:JBFqnCBsd6RMkjVDRZzb",
-      "language": "en",
-      "stt": "deepgram:nova-3",
-      "turnDetection": "smart_turn",
-      "interruption": true,
-      "instructions": "You are a helpful receptionist.",
-      "greeting": "Hello! How can I help you?"
-    },
-    {
-      "name": "spanish-bot",
-      "model": "gpt-4.1-nano",
-      "phone": "+12025551234",
-      "voice": "elevenlabs:xyz",
-      "language": "es",
-      "instructions": "Eres un asistente amable.",
-      "greeting": "¡Hola! ¿En qué puedo ayudarte?"
-    }
-  ]
+  "agentsDir": "./agents"
 }
 ```
 
@@ -1150,22 +1138,50 @@ Server configuration file. Auto-detected in the current directory.
 | `host` | `string` | `"0.0.0.0"` | Bind address |
 | `ui` | `boolean` | `true` | Serve Dashboard UI |
 | `agentsDir` | `string` | — | Directory of agent `.js/.ts` files |
-| `agents` | `AgentConfig[]` | `[]` | Inline agent declarations |
 
-#### Agent Config Fields (JSON)
+CLI flags always override config file values:
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `name` | `string` | **Required.** Agent name |
-| `model` | `string` | LLM model (`"gpt-4.1-nano"`, `"gpt-4o-mini"`, etc.) |
-| `phone` | `string` | Phone number to register |
-| `voice` | `string` | TTS voice (`"elevenlabs:id"`) |
-| `language` | `string` | Language code |
-| `stt` | `string` | STT provider (`"deepgram"`, `"deepgram-flux"`, etc.) |
-| `instructions` | `string` | System prompt |
-| `greeting` | `string` | Auto-spoken on call start |
-| `turnDetection` | `string` | Turn detection mode |
-| `interruption` | `boolean` | Enable/disable interruption |
+```bash
+pinecall server --port=8080 --disable-ui   # overrides config
+```
+
+---
+
+## Agent Database (Beta)
+
+> ⚠️ **Beta Feature** — CRUD for agents without tools. Tools support coming soon.
+
+When running `pinecall server`, agents can be created dynamically via the REST API. The server persists these agents to a JSON file (`agents.db.json`) in the working directory.
+
+**How it works:**
+
+1. `POST /agents` creates an agent and persists it
+2. `DELETE /agents/:name` removes and unpersists it
+3. On restart, agents are reloaded from `agents.db.json`
+
+**Example:**
+
+```bash
+# Create an agent dynamically (persisted to disk)
+curl -X POST http://localhost:4100/agents \
+  -d '{"name":"sales","model":"gpt-4.1-nano","phone":"+13186330963","instructions":"You sell."}'
+
+# Delete it
+curl -X DELETE http://localhost:4100/agents/sales
+```
+
+The agent database file location can be specified in `pinecall.config.json`:
+
+```json
+{
+  "agentsDir": "./agents",
+  "agentsDb": "./agents.db.json"
+}
+```
+
+**Limitations:**
+- Tool definitions are not supported via the REST API (use code-based agents for tools)
+- The default driver is a simple JSON file — extend with your own persistence layer
 
 ---
 
@@ -1195,7 +1211,7 @@ Server configuration file. Auto-detected in the current directory.
 
 | Event | Callback | Description |
 |-------|----------|-------------|
-| `ready` | `() => void` | Agent registered on server |
+| `ready` | `() => void` | Agent ready on server |
 | `call.started` | `(call: Call) => void` | New call |
 | `call.ended` | `(call: Call, reason: string) => void` | Call ended |
 | `speech.started` | `(event, call) => void` | User started speaking |
@@ -1205,7 +1221,7 @@ Server configuration file. Auto-detected in the current directory.
 | `eager.turn` | `(turn, call) => void` | Early turn detection |
 | `turn.pause` | `(event, call) => void` | Turn paused |
 | `turn.end` | `(turn, call) => void` | Confirmed turn end |
-| `turn.resumed` | `(event, call) => void` | User resumed speaking |
+| `turn.resumed` | `(event, call) => void` | User resumed |
 | `turn.continued` | `(event, call) => void` | Turn continues |
 | `bot.speaking` | `(event, call) => void` | Bot started TTS |
 | `bot.word` | `(event, call) => void` | Word-level TTS sync |
@@ -1222,13 +1238,13 @@ Server configuration file. Auto-detected in the current directory.
 
 | Event | Callback | Description |
 |-------|----------|-------------|
-| `call.held` | `() => void` | Call put on hold |
-| `call.unheld` | `() => void` | Call taken off hold |
+| `call.held` | `() => void` | Call on hold |
+| `call.unheld` | `() => void` | Call off hold |
 | `call.muted` | `() => void` | Mic muted |
-| `call.unmuted` | `(transcript: string \| null) => void` | Mic unmuted |
+| `call.unmuted` | `(transcript: string \| null) => void` | Mic unmuted (+ buffered text) |
 | `ended` | `(reason: string) => void` | Call ended |
 
-*(Plus all speech/turn/bot events from Agent, scoped to the specific call)*
+*(Plus all speech/turn/bot events from Agent, scoped to the call)*
 
 ---
 

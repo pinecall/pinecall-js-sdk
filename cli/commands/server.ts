@@ -36,7 +36,10 @@ interface ServerConfig {
     host?: string;
     ui?: boolean;
     agentsDir?: string;
-    agents: AgentConfig[];
+    /** Path to agent database file (for dynamic agent CRUD). Default: agents.db.json */
+    agentsDb?: string;
+    /** @deprecated — use agentsDir or REST API instead. Inline agents for pinecall.json compat. */
+    agents?: AgentConfig[];
 }
 
 // ── File resolution ──────────────────────────────────────────────────────
@@ -205,21 +208,34 @@ export async function server(argv: string[]): Promise<void> {
     if (configMode) {
         // ── Config mode: deploy from JSON ──
         const { config } = configMode;
-        if (!config.agents?.length) {
-            throw new CliError(`No agents defined in ${configMode.path}`);
-        }
+        if (!config.agents) config.agents = [];
 
         console.log(`  ${chalk.dim("config")} ${configMode.path}`);
         console.log("");
 
+        // Deploy inline agents (if any)
         for (const agentCfg of config.agents) {
             const agent = await deployConfigAgent(agentCfg, env);
             if (!pc) pc = agent.pinecall;
             deployed.push({ agent, name: agentCfg.name });
         }
-    } else {
-        // ── File mode: load JS/TS agents ──
-        const files = await resolveFiles(input!);
+
+        // Also load from agentsDir if specified
+        if (config.agentsDir && !input) {
+            const files = await resolveFiles(config.agentsDir);
+            for (const file of files) {
+                const { AgentClass, name } = await loadAgentClass(file);
+                const agent = new AgentClass({ apiKey: env.apiKey, openaiKey: env.openaiKey, url: env.url });
+                await agent.start();
+                if (!pc) pc = agent.pinecall;
+                deployed.push({ agent, name });
+            }
+        }
+    }
+
+    if (input && !configMode) {
+        // ── File/dir mode: load JS/TS agents ──
+        const files = await resolveFiles(input);
 
         for (const file of files) {
             const { AgentClass, name } = await loadAgentClass(file);
@@ -248,6 +264,7 @@ export async function server(argv: string[]): Promise<void> {
     if (configMode) {
         const cfgPath = configMode.path;
         const cfgData = configMode.config;
+        const agents: AgentConfig[] = cfgData.agents ?? (cfgData.agents = []);
 
         // Intercept EventServer's POST /agents to also persist
         const origHandleApi = (eventServer as any)._handleApi.bind(eventServer);
@@ -264,7 +281,7 @@ export async function server(argv: string[]): Promise<void> {
                 }
 
                 // Check if already exists
-                if (cfgData.agents.some(a => a.name === name)) {
+                if (agents.some(a => a.name === name)) {
                     (eventServer as any)._json(res, 409, { error: `Agent '${name}' already exists` });
                     return;
                 }
@@ -281,7 +298,7 @@ export async function server(argv: string[]): Promise<void> {
                     deployed.push({ agent, name });
 
                     // Persist to DB
-                    cfgData.agents.push(agentCfg);
+                    agents.push(agentCfg);
                     saveConfig(cfgPath, cfgData);
 
                     console.log(`  ${chalk.green("+")} ${chalk.hex("#7C3AED")(name)} deployed + persisted`);
@@ -308,7 +325,8 @@ export async function server(argv: string[]): Promise<void> {
                 deployed.splice(idx, 1);
 
                 // Remove from DB
-                cfgData.agents = cfgData.agents.filter(a => a.name !== name);
+                const agentIdx = agents.findIndex(a => a.name === name);
+                if (agentIdx !== -1) agents.splice(agentIdx, 1);
                 saveConfig(cfgPath, cfgData);
 
                 console.log(`  ${chalk.red("−")} ${chalk.hex("#7C3AED")(name)} removed + unpersisted`);
