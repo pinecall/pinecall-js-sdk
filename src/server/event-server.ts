@@ -245,6 +245,7 @@ export class EventServer {
                 channels: [...((a as any)._channels || new Map())].map(([ref]: [string]) => ref),
                 calls: [...a.calls.keys()],
                 token: this._agentTokens.get(a.id),
+                config: a.getConfig?.() ?? {},
             }));
             this._json(res, 200, { agents });
             return;
@@ -656,6 +657,7 @@ export class EventServer {
                         id: a.id,
                         channels: [...((a as any)._channels || new Map())].map(([ref]: [string]) => ref),
                         calls: [...a.calls.keys()],
+                        config: a.getConfig?.() ?? {},
                     })),
                 });
                 break;
@@ -676,6 +678,62 @@ export class EventServer {
                     }
                 }
                 reply({ event: "calls.list", calls });
+                break;
+            }
+
+            case "forward": {
+                const found = this._findCall(msg.call_id);
+                if (!found) { reply({ event: "error", action: "forward", message: `Call not found: ${msg.call_id}` }); return; }
+                if (!this._hasScope(ws, found.agent.id)) { reply({ event: "error", action: "forward", message: "Permission denied" }); return; }
+                if (!msg.to) { reply({ event: "error", action: "forward", message: "Missing 'to' number" }); return; }
+                found.call.forward(msg.to);
+                reply({ event: "action.ok", action: "forward", call_id: found.call.id, to: msg.to });
+                break;
+            }
+
+            case "dtmf": {
+                const found = this._findCall(msg.call_id);
+                if (!found) { reply({ event: "error", action: "dtmf", message: `Call not found: ${msg.call_id}` }); return; }
+                if (!this._hasScope(ws, found.agent.id)) { reply({ event: "error", action: "dtmf", message: "Permission denied" }); return; }
+                if (!msg.digits) { reply({ event: "error", action: "dtmf", message: "Missing 'digits'" }); return; }
+                found.call.sendDTMF(msg.digits);
+                reply({ event: "action.ok", action: "dtmf", call_id: found.call.id, digits: msg.digits });
+                break;
+            }
+
+            case "hold": {
+                const found = this._findCall(msg.call_id);
+                if (!found) { reply({ event: "error", action: "hold", message: `Call not found: ${msg.call_id}` }); return; }
+                if (!this._hasScope(ws, found.agent.id)) { reply({ event: "error", action: "hold", message: "Permission denied" }); return; }
+                found.call.hold();
+                reply({ event: "action.ok", action: "hold", call_id: found.call.id });
+                break;
+            }
+
+            case "unhold": {
+                const found = this._findCall(msg.call_id);
+                if (!found) { reply({ event: "error", action: "unhold", message: `Call not found: ${msg.call_id}` }); return; }
+                if (!this._hasScope(ws, found.agent.id)) { reply({ event: "error", action: "unhold", message: "Permission denied" }); return; }
+                found.call.unhold();
+                reply({ event: "action.ok", action: "unhold", call_id: found.call.id });
+                break;
+            }
+
+            case "mute": {
+                const found = this._findCall(msg.call_id);
+                if (!found) { reply({ event: "error", action: "mute", message: `Call not found: ${msg.call_id}` }); return; }
+                if (!this._hasScope(ws, found.agent.id)) { reply({ event: "error", action: "mute", message: "Permission denied" }); return; }
+                found.call.mute();
+                reply({ event: "action.ok", action: "mute", call_id: found.call.id });
+                break;
+            }
+
+            case "unmute": {
+                const found = this._findCall(msg.call_id);
+                if (!found) { reply({ event: "error", action: "unmute", message: `Call not found: ${msg.call_id}` }); return; }
+                if (!this._hasScope(ws, found.agent.id)) { reply({ event: "error", action: "unmute", message: "Permission denied" }); return; }
+                found.call.unmute();
+                reply({ event: "action.ok", action: "unmute", call_id: found.call.id });
                 break;
             }
 

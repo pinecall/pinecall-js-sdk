@@ -26,6 +26,7 @@ export function Sidebar({
   const [phones, setPhones] = useState<PhoneInfo[]>([]);
   const [showCreate, setShowCreate] = useState(false);
   const [phonesExpanded, setPhonesExpanded] = useState(false);
+  const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
 
   // Create agent form
   const [newName, setNewName] = useState('');
@@ -62,6 +63,13 @@ export function Sidebar({
 
   const activeCalls = Array.from(calls.values());
   const inputStyle = { background: 'rgba(20,10,32,0.6)', border: '1px solid rgba(60,30,90,0.4)', color: 'rgb(238,240,250)' };
+
+  const ConfigRow = ({ label, value }: { label: string; value: string }) => (
+    <div className="flex items-center justify-between py-0.5">
+      <span className="uppercase tracking-wide" style={{ color: 'rgb(100,75,140)' }}>{label}</span>
+      <span className="font-mono truncate ml-2" style={{ color: 'var(--pc-text-medium)', maxWidth: '140px' }}>{value}</span>
+    </div>
+  );
 
   return (
     <aside className="w-72 flex flex-col overflow-hidden" style={{ background: 'rgb(32, 16, 48)', borderRight: '1px solid rgba(60,30,90,0.6)' }}>
@@ -125,27 +133,57 @@ export function Sidebar({
           )}
           {agentList.map(agent => {
             const agentCalls = activeCalls.filter(c => c.agentId === agent.id);
+            const isExpanded = expandedAgent === agent.id;
+            const cfg = agent.config ?? {};
+            const model = cfg.llm?.model ?? cfg.model ?? null;
+            const voice = typeof cfg.voice === 'string' ? cfg.voice : cfg.voice?.voice_id ?? null;
+            const lang = cfg.language ?? null;
+            const instructions = cfg.llm?.instructions ?? cfg.instructions ?? null;
+            const stt = typeof cfg.stt === 'string' ? cfg.stt : cfg.stt?.provider ?? null;
+            const td = typeof cfg.turnDetection === 'string' ? cfg.turnDetection : cfg.turnDetection?.mode ?? null;
             return (
-              <div key={agent.id} className="mb-2 p-3 rounded-lg animate-fade-in" style={{ background: 'rgba(60,30,90,0.3)', border: '1px solid rgba(60,30,90,0.4)' }}>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    {agentCalls.length > 0 ? (
-                      <span className="w-2 h-2 rounded-full animate-pulse" style={{ background: 'rgb(92,245,152)' }} />
-                    ) : (
-                      <span className="w-2 h-2 rounded-full" style={{ background: 'rgba(130,100,170,0.4)' }} />
-                    )}
-                    <span className="text-sm font-medium" style={{ color: 'var(--pc-primary-light)' }}>{agent.id}</span>
+              <div key={agent.id} className="mb-2 rounded-lg animate-fade-in" style={{ background: 'rgba(60,30,90,0.3)', border: '1px solid rgba(60,30,90,0.4)' }}>
+                <div className="p-3 cursor-pointer" onClick={() => setExpandedAgent(isExpanded ? null : agent.id)}>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      {agentCalls.length > 0 ? (
+                        <span className="w-2 h-2 rounded-full animate-pulse" style={{ background: 'rgb(92,245,152)' }} />
+                      ) : (
+                        <span className="w-2 h-2 rounded-full" style={{ background: 'rgba(130,100,170,0.4)' }} />
+                      )}
+                      <span className="text-sm font-medium" style={{ color: 'var(--pc-primary-light)' }}>{agent.id}</span>
+                    </div>
+                    <button onClick={e => { e.stopPropagation(); handleDelete(agent.id); }} className="p-1 rounded transition-colors" style={{ color: 'rgba(255,107,178,0.6)' }}>
+                      <X size={12} />
+                    </button>
                   </div>
-                  <button onClick={() => handleDelete(agent.id)} className="p-1 rounded transition-colors" style={{ color: 'rgba(255,107,178,0.6)' }}>
-                    <X size={12} />
-                  </button>
+                  {agent.channels.length > 0 && (
+                    <div className="mt-1.5 text-xs" style={{ color: 'var(--pc-text-medium)' }}>📞 {agent.channels.join(', ')}</div>
+                  )}
+                  {agentCalls.length > 0 && (
+                    <div className="mt-1.5 text-xs" style={{ color: 'rgb(92,245,152)' }}>
+                      {agentCalls.length} active call{agentCalls.length > 1 ? 's' : ''}
+                    </div>
+                  )}
+                  {model && (
+                    <div className="mt-1.5 text-[10px] font-mono truncate" style={{ color: 'rgb(100,75,140)' }}>⚡ {model}</div>
+                  )}
                 </div>
-                {agent.channels.length > 0 && (
-                  <div className="mt-1.5 text-xs" style={{ color: 'var(--pc-text-medium)' }}>📞 {agent.channels.join(', ')}</div>
-                )}
-                {agentCalls.length > 0 && (
-                  <div className="mt-1.5 text-xs" style={{ color: 'rgb(92,245,152)' }}>
-                    {agentCalls.length} active call{agentCalls.length > 1 ? 's' : ''}
+                {isExpanded && (
+                  <div className="px-3 pb-3 space-y-1.5 text-[10px] animate-fade-in" style={{ borderTop: '1px solid rgba(60,30,90,0.4)' }}>
+                    {model && <ConfigRow label="Model" value={model} />}
+                    {voice && <ConfigRow label="Voice" value={voice} />}
+                    {lang && <ConfigRow label="Language" value={lang} />}
+                    {stt && <ConfigRow label="STT" value={stt} />}
+                    {td && <ConfigRow label="Turn" value={td} />}
+                    {instructions && (
+                      <div className="pt-1">
+                        <span className="uppercase tracking-wide" style={{ color: 'rgb(100,75,140)' }}>Instructions</span>
+                        <div className="mt-0.5 text-[10px] leading-relaxed line-clamp-3" style={{ color: 'var(--pc-text-medium)' }}>
+                          {instructions}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

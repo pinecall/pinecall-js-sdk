@@ -10,6 +10,7 @@ import ConversationView from './components/ConversationView';
 import EventLog from './components/EventLog';
 import EventDetailModal from './components/EventDetailModal';
 import DialpadPanel from './components/DialpadPanel';
+import CallControlModal from './components/CallControlModal';
 import AudioWaveform from './components/AudioWaveform';
 import StatusDot from './components/shared/StatusDot';
 import { formatDuration } from './utils';
@@ -100,6 +101,13 @@ export default function App() {
             userMetricsRef={socket.userMetrics}
             botMetricsRef={socket.botMetrics}
             isInCall={isInCall}
+          />
+        )}
+        {isInCall && (
+          <CallControlModal
+            sessionId={socket.sessionId}
+            send={socket.send}
+            onHangup={() => socket.sessionId && api.hangup(socket.sessionId)}
           />
         )}
         <DialpadPanel

@@ -32,6 +32,7 @@ export interface AgentInfo {
   channels: string[];
   calls: string[];
   token: string;
+  config?: Record<string, any>;
 }
 
 /** Phone info from REST API */
