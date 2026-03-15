@@ -229,7 +229,6 @@ const agent = pc.agent("my-agent", {
   stt: "deepgram:nova-3",
   turnDetection: "smart_turn",
   interruption: false,
-  llm: "openai:gpt-4.1-nano",
 });
 
 // Add channels
@@ -441,6 +440,59 @@ phone.stt = "deepgram:nova-3";
 phone.greeting = "¡Hola!";
 phone.turnDetection = { mode: "smart_turn", smart_turn_threshold: 0.6 };
 ```
+
+---
+
+### Server-Side LLM
+
+The Pinecall server can run LLM inference directly — the SDK only needs to define the model, instructions, and tools. This eliminates SDK round-trips for LLM calls and provides the lowest latency.
+
+**Enable server-side LLM by setting `model`:**
+
+```typescript
+class MyBot extends GPTAgent {
+  model = "gpt-4.1-nano";            // enables server-side LLM
+  instructions = "You are a helpful receptionist.";
+  greeting = "Hello! How can I help?";
+  temperature = 0.7;                   // LLM temperature
+  maxTokens = 150;                     // max response tokens
+}
+```
+
+With `GPTAgent`, the server handles everything: receiving user turns, calling OpenAI, streaming TTS, and managing tool calls. No `onTurn()` override is needed.
+
+**LLM is optional.** If you don't set `model`, you handle LLM calls yourself in `onTurn()`:
+
+```typescript
+class CustomBot extends Agent {
+  // No model — you control the LLM
+  async onTurn(turn, call, history) {
+    const response = await myCustomLLM(turn.text);
+    call.reply(response);
+  }
+}
+```
+
+#### LLM Configuration
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `model` | `string` | — | LLM model name (e.g., `"gpt-4.1-nano"`, `"gpt-4o-mini"`) |
+| `instructions` | `string` | `"You are a helpful voice assistant."` | System prompt |
+| `temperature` | `number` | — | Sampling temperature (0-2) |
+| `maxTokens` | `number` | — | Maximum response tokens |
+| `greeting` | `string` | — | Auto-spoken on call start |
+| `turnEvent` | `string` | `"eager.turn"` | When to invoke LLM: `"eager.turn"` or `"turn.end"` |
+
+#### LLM Events
+
+When using server-side LLM, these events are emitted and streamed to WS clients:
+
+| Event | Description |
+|-------|-------------|
+| `llm.stream` | Streaming LLM response chunk (text token) |
+| `llm.tool_call` | LLM invoked a tool (name + arguments) |
+| `llm.tool_result` | Tool execution result returned to LLM |
 
 ---
 
@@ -710,6 +762,8 @@ Connect to `ws://localhost:4100` and send JSON commands.
 | `unhold` | `{ call_id }` | Take call off hold |
 | `mute` | `{ call_id }` | Mute mic |
 | `unmute` | `{ call_id }` | Unmute mic |
+| `say` | `{ call_id, text, message_id? }` | Send a standalone message to caller |
+| `reply` | `{ call_id, text, in_reply_to?, message_id? }` | Reply to latest user message |
 | `agents` | `{}` | List agents |
 | `calls` | `{}` | List active calls |
 
@@ -866,7 +920,6 @@ const agent = pc.agent("bot", {
   language: "en",
   turnDetection: "smart_turn",                   // mode name
   interruption: false,                           // disable
-  llm: "openai:gpt-4.1-nano",                   // provider:model
 });
 ```
 
@@ -962,7 +1015,7 @@ stt: {
 // Shortcut: "gladia"
 ```
 
-#### Transcribe (Azure)
+#### Transcribe (AWS)
 
 ```typescript
 stt: {

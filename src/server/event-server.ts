@@ -798,6 +798,26 @@ export class EventServer {
                 break;
             }
 
+            case "say": {
+                const found = this._findCall(msg.call_id);
+                if (!found) { reply({ event: "error", action: "say", message: `Call not found: ${msg.call_id}` }); return; }
+                if (!this._hasScope(ws, found.agent.id)) { reply({ event: "error", action: "say", message: "Permission denied" }); return; }
+                if (!msg.text) { reply({ event: "error", action: "say", message: "Missing 'text'" }); return; }
+                found.call.say(msg.text, msg.message_id);
+                reply({ event: "action.ok", action: "say", call_id: found.call.id });
+                break;
+            }
+
+            case "reply": {
+                const found = this._findCall(msg.call_id);
+                if (!found) { reply({ event: "error", action: "reply", message: `Call not found: ${msg.call_id}` }); return; }
+                if (!this._hasScope(ws, found.agent.id)) { reply({ event: "error", action: "reply", message: "Permission denied" }); return; }
+                if (!msg.text) { reply({ event: "error", action: "reply", message: "Missing 'text'" }); return; }
+                found.call.reply(msg.text, { messageId: msg.message_id, inReplyTo: msg.in_reply_to });
+                reply({ event: "action.ok", action: "reply", call_id: found.call.id });
+                break;
+            }
+
             default:
                 reply({ event: "error", message: `Unknown action: ${msg.action}` });
         }
