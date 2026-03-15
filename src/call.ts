@@ -302,6 +302,16 @@ export class Call extends TypedEmitter<CallEvents> {
     }
 
     /**
+     * Replace the entire conversation history.
+     * Use with getHistory() for cross-call persistence.
+     * Returns updated message count.
+     */
+    async setHistory(messages: Array<{ role: string; content: string }>): Promise<number> {
+        const res = await this._request("history.set", "history.updated", { messages });
+        return res.count ?? 0;
+    }
+
+    /**
      * Clear history (system prompt is preserved).
      * Returns updated message count.
      */

@@ -531,6 +531,7 @@ The server maintains conversation history per call. You can read, inject, clear,
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `call.getHistory()` | `Promise<Message[]>` | Fetch full conversation history (OpenAI format) |
+| `call.setHistory(messages)` | `Promise<number>` | Replace entire history (for restoring saved state) |
 | `call.addHistory(messages)` | `Promise<number>` | Inject messages into history (e.g. CRM context) |
 | `call.clearHistory()` | `Promise<number>` | Clear history (system prompt preserved) |
 | `call.setInstructions(text)` | `Promise<number>` | Update system prompt mid-call |
@@ -557,6 +558,22 @@ console.log(`${messages.length} messages in history`);
 
 // Reset conversation
 await call.clearHistory(); // keeps system prompt
+```
+
+**Cross-call persistence (you manage storage):**
+
+```typescript
+// Restore previous conversation on call start
+agent.on("call.started", async (call) => {
+  const saved = await myDb.get(call.from);
+  if (saved) await call.setHistory(saved);
+});
+
+// Save conversation when call ends
+agent.on("call.ended", async (call) => {
+  const history = await call.getHistory();
+  await myDb.save(call.from, history);
+});
 ```
 
 All history methods use a request/response protocol (`history.get` → `history.data`, etc.) and return the updated message count.
