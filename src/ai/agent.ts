@@ -66,8 +66,8 @@ export class Agent {
     temperature?: number;
     /** Max response tokens (server-side). */
     maxTokens?: number;
-    /** System prompt sent to the server-side LLM. */
-    instructions = "You are a helpful voice assistant. Be concise.";
+    /** System prompt sent to the server-side LLM. String or callback for per-call personalization. */
+    instructions: string | ((call: Call) => string | Promise<string>) = "You are a helpful voice assistant. Be concise.";
     /** Fallback greeting (channel greeting takes priority). String or async callback for dynamic greetings. */
     greeting?: string | ((call: Call) => string | Promise<string>);
     /** Which turn event to respond on. Default: "eager.turn". */
@@ -124,7 +124,8 @@ export class Agent {
         const useServerLLM = this._serverSideLLM || !!this.model;
         if (useServerLLM && this.model) {
             cfg.llm = this.model;
-            if (this.instructions) (cfg as any).instructions = this.instructions;
+            const instr = typeof this.instructions === "string" ? this.instructions : "You are a helpful voice assistant.";
+            if (instr) (cfg as any).instructions = instr;
             const tools = this._getToolDefinitions();
             if (tools.length > 0) (cfg as any).tools = tools;
         }
@@ -298,6 +299,13 @@ export class Agent {
     /** @internal */
     private _wireEvents(): void {
         this._core.on("call.started", async (call) => {
+            // Resolve dynamic instructions
+            if (typeof this.instructions === "function") {
+                const resolved = await this.instructions(call);
+                if (resolved) await call.setInstructions(resolved);
+            }
+
+            // Resolve dynamic greeting
             const raw = this._greetingForCall(call) ?? this.greeting;
             if (raw) {
                 const text = typeof raw === "function" ? await raw(call) : raw;

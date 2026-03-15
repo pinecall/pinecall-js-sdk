@@ -362,7 +362,7 @@ class MyBot extends Agent {
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `model` | `string` | — | LLM model (e.g., `"gpt-4.1-nano"`) |
-| `instructions` | `string` | `"You are a helpful voice assistant."` | System prompt |
+| `instructions` | `string \| ((call) => string \| Promise<string>)` | `"You are a helpful voice assistant."` | System prompt. Supports callbacks |
 | `greeting` | `string \| ((call) => string \| Promise<string>)` | — | Auto-spoken on call start. Supports async callbacks |
 | `voice` | `string \| object` | — | TTS voice (`"elevenlabs:id"` or config) |
 | `language` | `string` | — | Language code (`"en"`, `"es"`, `"fr"`, ...) |
@@ -471,6 +471,26 @@ class MyBot extends GPTAgent {
 
 The callback receives the full `Call` object with `call.from`, `call.to`, `call.direction`, and `call.metadata`.
 
+#### Dynamic Instructions
+
+`instructions` also supports callbacks for per-call system prompts:
+
+```typescript
+class MyBot extends GPTAgent {
+  model = "gpt-4.1-nano";
+
+  // Personalize system prompt per caller
+  instructions = async (call) => {
+    const user = await db.findByPhone(call.from);
+    return user
+      ? `You are helping ${user.name} (${user.plan} plan). Be friendly.`
+      : "You are a helpful assistant. Ask for their name first.";
+  };
+}
+```
+
+When `instructions` is a callback, a default prompt is sent at registration and `call.setInstructions()` is called automatically when the call starts.
+
 ---
 
 ### Server-Side LLM
@@ -508,7 +528,7 @@ class CustomBot extends Agent {
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `model` | `string` | — | LLM model name (e.g., `"gpt-4.1-nano"`, `"gpt-4o-mini"`) |
-| `instructions` | `string` | `"You are a helpful voice assistant."` | System prompt |
+| `instructions` | `string \| ((call) => string \| Promise<string>)` | `"You are a helpful voice assistant."` | System prompt |
 | `temperature` | `number` | — | Sampling temperature (0-2) |
 | `maxTokens` | `number` | — | Maximum response tokens |
 | `greeting` | `string \| ((call) => string \| Promise<string>)` | — | Auto-spoken on call start |
