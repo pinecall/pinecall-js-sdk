@@ -439,6 +439,8 @@ agent.on("eager.turn", async (turn, call) => {
 
 `eager.turn` fires as soon as the model thinks the user stopped — before the full silence confirmation. If the user keeps talking, `stream.aborted` becomes `true` automatically.
 
+> **Note (Flux native mode):** When using `deepgram-flux` with `turnDetection: "native"`, `eager.turn` is deferred to `EndOfTurn` instead of firing at `EagerEndOfTurn`. Flux's speculative text changes frequently, so the server waits for the final confirmed transcript before triggering LLM generation. This adds ~200ms latency but eliminates wasted tokens and race conditions.
+
 | ✅ Good fit | ❌ Avoid |
 |-------------|---------|
 | Fast models (`gpt-4.1-nano`, `gpt-4.1-mini`) | Expensive models (`o3`, `o4-mini`) |
@@ -742,19 +744,32 @@ ws.send(JSON.stringify({ action: "calls" }));     // → calls.list response
 | | `pinecall run` | `pinecall server` |
 |---|---|---|
 | **Purpose** | Dev & debugging | Production |
-| **UI** | Interactive TUI | Headless |
+| **UI** | Interactive TUI | Web dashboard |
 | **Events** | Console + colors | WS + REST API |
 | **Multi-agent** | One TUI | Each agent gets token |
+| **Dashboard** | — | Built-in React UI at `http://localhost:4100` |
 
 ```bash
 # Dev mode — interactive TUI with slash commands
 pinecall run Agent.js
 pinecall run ./agents
 
-# Server mode — headless with REST + WS
+# Server mode — headless with REST + WS + Dashboard UI
 pinecall server Agent.js
 pinecall server ./agents --port=4100
 ```
+
+#### Dashboard UI
+
+`pinecall server` includes a built-in web dashboard at the server URL (default `http://localhost:4100`).
+
+Features:
+- **Live call monitoring** — see active calls, user/bot transcripts in real-time
+- **Agent management** — view deployed agents and their channels
+- **Event log** — debug WebSocket events as they flow
+- **Call controls** — dial, hangup, hold/unhold from the UI
+
+The dashboard connects via WebSocket to the same EventServer and displays all forwarded events. No additional setup needed.
 
 #### CLI Slash Commands
 
@@ -850,6 +865,8 @@ stt: { provider: "deepgram", language: "en", model: "nova-3" }   // full
 English only. Ultra-low latency. Built-in turn detection.
 
 > **Default for `Phone`** — `new Phone({ number: "..." })` uses Flux automatically. Pair with `turnDetection: "native"` (also the `Phone` default) for end-to-end lowest latency.
+
+> **Deferred eager.turn:** In native mode, the server does NOT start LLM generation on Flux's `EagerEndOfTurn` — the speculative text changes too frequently. Instead, the server waits for `EndOfTurn` (final confirmed transcript) before emitting `eager.turn` + `user.message` + `turn.end`. This adds ~200ms latency but produces correct responses with stable text every time.
 
 ```typescript
 stt: { provider: "deepgram-flux" }
