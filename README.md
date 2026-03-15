@@ -580,6 +580,8 @@ The server maintains conversation history per call. You can read, inject, clear,
 | `call.addHistory(messages)` | `Promise<number>` | Inject messages into history (e.g. CRM context) |
 | `call.clearHistory()` | `Promise<number>` | Clear history (system prompt preserved) |
 | `call.setPrompt(text)` | `Promise<number>` | Update system prompt mid-call |
+| `call.setPromptFile(name)` | `Promise<number>` | Load prompt from `prompts/` folder |
+| `call.setPromptVars(vars)` | `Promise<number>` | Replace `{{vars}}` in current prompt template |
 
 **Examples:**
 
@@ -596,6 +598,10 @@ agent.on("call.started", async (call) => {
 
 // Change personality mid-call
 await call.setPrompt("You are now a technical support agent. Be detailed.");
+
+// Load a different prompt file and inject variables
+await call.setPromptFile("vip_support.txt"); // loads from prompts/vip_support.txt
+await call.setPromptVars({ name: "John", plan: "Enterprise" });
 
 // Read current history
 const messages = await call.getHistory();

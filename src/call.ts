@@ -96,6 +96,12 @@ export class Call extends TypedEmitter<CallEvents> {
     /** Active ReplyStreams — aborted automatically on turn.continued. */
     private _activeStreams = new Set<ReplyStream>();
 
+    /** @internal Base prompt template (for variable interpolation). */
+    _promptTemplate = "";
+
+    /** @internal Prompts directory (set by agent). */
+    _promptsDir = "prompts";
+
     /** Send function provided by Pinecall client. */
     private _send: (data: Record<string, unknown>) => void;
 
@@ -325,7 +331,37 @@ export class Call extends TypedEmitter<CallEvents> {
      * Takes effect on the next LLM request.
      */
     async setPrompt(prompt: string): Promise<number> {
-        const res = await this._request("history.set_instructions", "history.updated", { instructions: prompt });
+        this._promptTemplate = prompt;
+        return this._sendPrompt(prompt);
+    }
+
+    /**
+     * Load a prompt file and set it as the system prompt.
+     * Resolves relative to the prompts directory (default: `prompts/`).
+     */
+    async setPromptFile(filePath: string): Promise<number> {
+        const path = require("path");
+        const fs = require("fs");
+        const resolved = path.resolve(this._promptsDir, filePath);
+        this._promptTemplate = fs.readFileSync(resolved, "utf-8").trim();
+        return this._sendPrompt(this._promptTemplate);
+    }
+
+    /**
+     * Replace {{variables}} in the current prompt template and update the system prompt.
+     * Call setPrompt() or setPromptFile() first to set the template.
+     */
+    async setPromptVars(vars: Record<string, string>): Promise<number> {
+        let text = this._promptTemplate;
+        for (const [key, val] of Object.entries(vars)) {
+            text = text.split(`{{${key}}}`).join(String(val));
+        }
+        return this._sendPrompt(text);
+    }
+
+    /** @internal Send resolved prompt to server. */
+    private async _sendPrompt(text: string): Promise<number> {
+        const res = await this._request("history.set_instructions", "history.updated", { instructions: text });
         return res.count ?? 0;
     }
 

@@ -95,6 +95,8 @@ export class Agent {
     protected _started = false;
     /** @internal — When true, model is auto-prefixed with "pinecall:" for server-side LLM. */
     protected _serverSideLLM = false;
+    /** @internal — Prompt text resolved at startup (from file or field). */
+    private _resolvedPrompt: string | undefined;
 
     // ── Constructor ──────────────────────────────────────────────────────
 
@@ -137,7 +139,10 @@ export class Agent {
                 }
             } catch { /* no auto-load */ }
 
-            if (promptText) (cfg as any).instructions = promptText;
+            if (promptText) {
+                (cfg as any).instructions = promptText;
+                this._resolvedPrompt = promptText;
+            }
             const tools = this._getToolDefinitions();
             if (tools.length > 0) (cfg as any).tools = tools;
         }
@@ -311,6 +316,10 @@ export class Agent {
     /** @internal */
     private _wireEvents(): void {
         this._core.on("call.started", async (call) => {
+            // Set prompt template on call for setPromptVars() / setPromptFile()
+            call._promptsDir = "prompts";
+            call._promptTemplate = this._resolvedPrompt ?? this.prompt;
+
             // Resolve dynamic greeting
             const raw = this._greetingForCall(call) ?? this.greeting;
             if (raw) {
