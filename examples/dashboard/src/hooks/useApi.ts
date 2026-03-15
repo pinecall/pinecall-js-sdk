@@ -1,3 +1,6 @@
+/**
+ * useApi — REST API hook for EventServer endpoints.
+ */
 import { useState, useCallback } from 'react';
 import type { AgentInfo, PhoneInfo, VoiceInfo, AgentConfig } from '../types';
 import { API_BASE } from '../config';
@@ -39,9 +42,7 @@ export function useApi() {
   }, []);
 
   const deleteAgent = useCallback(async (name: string): Promise<any> => {
-    const res = await fetch(`${API_BASE}/agents/${encodeURIComponent(name)}`, {
-      method: 'DELETE',
-    });
+    const res = await fetch(`${API_BASE}/agents/${encodeURIComponent(name)}`, { method: 'DELETE' });
     return await res.json();
   }, []);
 
@@ -54,5 +55,10 @@ export function useApi() {
     return await res.json();
   }, []);
 
-  return { fetchAgents, fetchPhones, fetchVoices, createAgent, deleteAgent, dial, loading };
+  const hangup = useCallback(async (callId: string): Promise<any> => {
+    const res = await fetch(`${API_BASE}/calls/${encodeURIComponent(callId)}/hangup`, { method: 'POST' });
+    return await res.json();
+  }, []);
+
+  return { fetchAgents, fetchPhones, fetchVoices, createAgent, deleteAgent, dial, hangup, loading };
 }

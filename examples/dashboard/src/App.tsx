@@ -1,126 +1,125 @@
-import { useState } from 'react';
+/**
+ * App — Main layout. 3-column: Sidebar | Conversation | Right panel.
+ * Ported from dev-ui PlayerPage layout.
+ */
+import { useState, useCallback, useEffect } from 'react';
 import { useSocket } from './hooks/useSocket';
 import { useApi } from './hooks/useApi';
 import { Sidebar } from './components/Sidebar';
-import { CallView } from './components/CallView';
-import { CreateAgent } from './components/CreateAgent';
-import { DialForm } from './components/DialForm';
-import { EventLog } from './components/EventLog';
+import ConversationView from './components/ConversationView';
+import EventLog from './components/EventLog';
+import EventDetailModal from './components/EventDetailModal';
+import DialpadPanel from './components/DialpadPanel';
+import AudioWaveform from './components/AudioWaveform';
+import StatusDot from './components/shared/StatusDot';
+import { formatDuration } from './utils';
+import type { EventEntry, PhoneInfo } from './types';
 
 export default function App() {
   const socket = useSocket();
   const api = useApi();
-  const [selectedCallId, setSelectedCallId] = useState<string | null>(null);
-  const [showCreate, setShowCreate] = useState(false);
-  const [showDial, setShowDial] = useState(false);
-  const [showEvents, setShowEvents] = useState(true);
-  const [, forceRefresh] = useState(0);
+  const [selectedEvent, setSelectedEvent] = useState<EventEntry | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [phones, setPhones] = useState<PhoneInfo[]>([]);
 
-  // Auto-select first call when one appears
-  const callIds = Array.from(socket.calls.keys());
-  const activeCallId = selectedCallId && socket.calls.has(selectedCallId)
-    ? selectedCallId
-    : callIds[0] ?? null;
-  const activeCall = activeCallId ? socket.calls.get(activeCallId) : null;
+  const onRefresh = useCallback(() => setRefreshKey(k => k + 1), []);
+  const isInCall = socket.callStatus !== 'idle' && socket.callStatus !== 'ended';
+
+  // Fetch phones from REST when connected
+  useEffect(() => {
+    if (socket.connected) {
+      api.fetchPhones().then(setPhones).catch(() => {});
+    }
+  }, [socket.connected, refreshKey, api.fetchPhones]);
+
+  // Combine phone sources: WS activePhones + REST phones
+  const allPhones = [
+    ...new Set([
+      ...socket.activePhones,
+      ...phones.map(p => p.number),
+    ]),
+  ];
 
   return (
-    <div className="flex h-screen bg-bg">
-      {/* Sidebar */}
+    <div className="h-screen flex overflow-hidden" style={{ background: 'rgb(24, 12, 36)', color: 'rgb(238, 240, 250)' }}>
+      {/* Left Sidebar */}
       <Sidebar
+        key={refreshKey}
         connected={socket.connected}
-        agentIds={socket.agents}
+        agents={socket.agents}
         calls={socket.calls}
-        selectedCallId={activeCallId}
-        onSelectCall={setSelectedCallId}
-        onShowCreate={() => setShowCreate(true)}
-        onShowDial={() => setShowDial(true)}
+        activePhones={allPhones}
         fetchAgents={api.fetchAgents}
         fetchPhones={api.fetchPhones}
         deleteAgent={api.deleteAgent}
-        onRefresh={() => forceRefresh(n => n + 1)}
+        createAgent={api.createAgent}
+        onRefresh={onRefresh}
       />
 
-      {/* Main panel */}
-      <div className="flex flex-1 flex-col min-w-0">
-        {activeCall ? (
-          <CallView
-            call={activeCall}
-            transcript={socket.transcripts.get(activeCallId!) ?? []}
-            botTokenBuffer={socket.botTokens.get(activeCallId!) ?? ''}
-            isHeld={socket.heldCalls.has(activeCallId!)}
-            isMuted={socket.mutedCalls.has(activeCallId!)}
-            isSpeaking={socket.speakingCalls.has(activeCallId!)}
-            onHangup={() => socket.send({ action: 'hangup', call_id: activeCallId })}
-            onHold={() => {
-              // Hold/unhold toggles are sent as WS commands
-              // The backend translates them to call methods
-              socket.send({
-                action: 'configure',
-                call_id: activeCallId,
-                hold: !socket.heldCalls.has(activeCallId!),
-              });
-            }}
-            onMute={() => {
-              socket.send({
-                action: 'configure',
-                call_id: activeCallId,
-                mute: !socket.mutedCalls.has(activeCallId!),
-              });
-            }}
-          />
-        ) : (
-          <div className="flex-1 flex items-center justify-center">
-            <div className="text-center">
-              <div className="text-5xl mb-3 opacity-20">🟣</div>
-              <h2 className="text-lg font-medium text-muted/60">No active calls</h2>
-              <p className="text-sm text-muted/40 mt-1">
-                {socket.connected
-                  ? `${socket.agents.length} agent${socket.agents.length !== 1 ? 's' : ''} deployed`
-                  : 'Connecting to server...'}
-              </p>
-              {socket.connected && socket.agents.length > 0 && (
-                <button
-                  onClick={() => setShowDial(true)}
-                  className="mt-4 px-4 py-2 rounded-lg bg-accent/20 text-accent-light text-sm hover:bg-accent/30 transition-colors"
-                >
-                  📞 Make a Call
-                </button>
-              )}
-            </div>
+      {/* Main content */}
+      <main className="flex-1 flex flex-col overflow-hidden">
+        {/* Header bar */}
+        <header className="h-12 flex items-center justify-between px-6" style={{ borderBottom: '1px solid rgba(60,30,90,0.6)' }}>
+          <div className="flex items-center gap-3">
+            {isInCall ? (
+              <>
+                <StatusDot status={socket.callStatus} size="md" />
+                <span className="font-medium text-sm" style={{ color: 'var(--pc-text-light)' }}>
+                  {socket.sessionType === 'phone' ? `Call from ${socket.sessionFrom}` : 'Session'}
+                </span>
+                <span style={{ color: 'var(--pc-text-medium)', opacity: 0.2 }}>|</span>
+                <span className="text-sm font-mono tabular-nums" style={{ color: 'var(--pc-text-medium)' }}>{formatDuration(socket.duration)}</span>
+                <span style={{ color: 'var(--pc-text-medium)', opacity: 0.2 }}>|</span>
+                <span className="text-[11px] px-2 py-0.5 rounded-full font-medium" style={{
+                  background: socket.callStatus === 'listening' ? 'rgba(92, 245, 152, 0.1)' : socket.callStatus === 'speaking' ? 'rgba(190, 124, 255, 0.1)' : 'rgba(255, 196, 60, 0.1)',
+                  color: socket.callStatus === 'listening' ? 'rgb(92, 245, 152)' : socket.callStatus === 'speaking' ? 'rgb(190, 124, 255)' : 'rgb(255, 196, 60)',
+                }}>{socket.callStatus}</span>
+              </>
+            ) : (
+              <span className="text-sm" style={{ color: 'var(--pc-text-medium)', opacity: 0.4 }}>
+                Waiting for incoming call...
+              </span>
+            )}
           </div>
+        </header>
+
+        {/* Conversation */}
+        <ConversationView
+          messages={socket.messages}
+          onClear={socket.clearMessages}
+          isInCall={isInCall}
+          send={socket.send}
+          sessionId={socket.sessionId}
+        />
+      </main>
+
+      {/* Right Sidebar */}
+      <aside className="w-80 flex flex-col overflow-hidden" style={{ background: 'rgb(26, 13, 39)', borderLeft: '1px solid rgba(60,30,90,0.6)' }}>
+        {isInCall && (
+          <AudioWaveform
+            userMetricsRef={socket.userMetrics}
+            botMetricsRef={socket.botMetrics}
+            isInCall={isInCall}
+          />
         )}
-
-        {/* Event log panel */}
-        <div className="border-t border-border">
-          <button
-            onClick={() => setShowEvents(!showEvents)}
-            className="w-full flex items-center justify-between px-4 py-2 bg-surface/50 text-xs text-muted hover:text-white transition-colors"
-          >
-            <span>Event Log ({socket.events.length})</span>
-            <span>{showEvents ? '▼' : '▲'}</span>
-          </button>
-          {showEvents && (
-            <div className="h-48 bg-bg/80">
-              <EventLog events={socket.events} />
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Modals */}
-      {showCreate && (
-        <CreateAgent
-          onClose={() => { setShowCreate(false); forceRefresh(n => n + 1); }}
-          onCreate={api.createAgent}
+        <DialpadPanel
+          activePhones={allPhones}
+          agents={socket.agents}
+          sessionId={socket.sessionId}
+          isInCall={isInCall}
+          sessionFrom={socket.sessionFrom}
+          duration={socket.duration}
+          hangup={api.hangup}
         />
-      )}
-      {showDial && (
-        <DialForm
-          agentIds={socket.agents}
-          onClose={() => setShowDial(false)}
-          onDial={api.dial}
+        <EventLog
+          events={socket.eventLog}
+          onClear={socket.clearEvents}
+          onSelectEvent={setSelectedEvent}
         />
-      )}
+      </aside>
+
+      {/* Event Detail Modal */}
+      <EventDetailModal event={selectedEvent} onClose={() => setSelectedEvent(null)} />
     </div>
   );
 }
