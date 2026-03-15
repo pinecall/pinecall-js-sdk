@@ -1,11 +1,11 @@
 /**
- * `pinecall server <name|folder>` — headless server mode with REST API + WS events.
+ * `pinecall server` — headless server mode with REST API + WS events.
  *
- * Loads agent(s), starts EventServer with REST + WS on a single port.
- *
- *   pinecall server Agent.js                     → single agent
- *   pinecall server ./agents                     → all agents in folder
- *   pinecall server ./agents --port=4100
+ * Supports three source modes:
+ *   pinecall server Agent.js               → code-based agent(s)
+ *   pinecall server ./agents               → directory of agent files
+ *   pinecall server                        → reads pinecall.json (declarative)
+ *   pinecall server --config=custom.json   → custom config file
  */
 
 import { resolveEnv, requireOpenAI } from "../lib/env.js";
@@ -14,8 +14,30 @@ import { CliError } from "../lib/errors.js";
 import chalk from "chalk";
 
 const EXTENSIONS = [".js", ".ts", ".mjs", ".mts"];
+const CONFIG_NAMES = ["pinecall.json", "pinecall.config.json"];
 
-// ── File resolution (shared with run.ts logic) ──────────────────────────
+// ── Types ────────────────────────────────────────────────────────────────
+
+interface AgentConfig {
+    name: string;
+    model?: string;
+    voice?: string;
+    language?: string;
+    stt?: string;
+    phone?: string;
+    instructions?: string;
+    greeting?: string;
+    turnDetection?: string;
+    interruption?: boolean;
+}
+
+interface ServerConfig {
+    port?: number;
+    host?: string;
+    agents: AgentConfig[];
+}
+
+// ── File resolution ──────────────────────────────────────────────────────
 
 async function resolveFiles(input: string): Promise<string[]> {
     const path = await import("node:path");
@@ -65,61 +87,234 @@ async function loadAgentClass(fullPath: string): Promise<{ AgentClass: any; name
     return { AgentClass, name };
 }
 
+// ── Config detection ─────────────────────────────────────────────────────
+
+async function findConfig(explicit?: string): Promise<{ path: string; config: ServerConfig } | null> {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const cwd = process.cwd();
+
+    // Explicit --config flag
+    if (explicit) {
+        const full = path.resolve(cwd, explicit);
+        if (!fs.existsSync(full)) throw new CliError(`Config file not found: ${explicit}`);
+        const raw = fs.readFileSync(full, "utf-8");
+        return { path: full, config: JSON.parse(raw) };
+    }
+
+    // Auto-detect pinecall.json in cwd
+    for (const name of CONFIG_NAMES) {
+        const full = path.resolve(cwd, name);
+        if (fs.existsSync(full)) {
+            const raw = fs.readFileSync(full, "utf-8");
+            return { path: full, config: JSON.parse(raw) };
+        }
+    }
+
+    return null;
+}
+
+// ── Config persistence ───────────────────────────────────────────────────
+
+function saveConfig(configPath: string, config: ServerConfig): void {
+    const fs = require("node:fs");
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n", "utf-8");
+}
+
+// ── Deploy agent from config ─────────────────────────────────────────────
+
+async function deployConfigAgent(
+    cfg: AgentConfig,
+    env: { apiKey: string; openaiKey?: string; url?: string },
+): Promise<any> {
+    const { GPTAgent, Phone } = await import("@pinecall/sdk/ai");
+
+    // Create a dynamic subclass with the config values
+    const DynAgent = class extends GPTAgent {};
+    Object.defineProperty(DynAgent, "name", { value: cfg.name });
+
+    const agent = new DynAgent({
+        apiKey: env.apiKey,
+        openaiKey: env.openaiKey,
+        url: env.url,
+    });
+
+    // Apply config fields
+    if (cfg.model) agent.model = cfg.model;
+    if (cfg.voice) (agent as any).voice = cfg.voice;
+    if (cfg.language) (agent as any).language = cfg.language;
+    if (cfg.stt) (agent as any).stt = cfg.stt;
+    if (cfg.instructions) agent.instructions = cfg.instructions;
+    if (cfg.greeting) agent.greeting = cfg.greeting;
+    if (cfg.turnDetection) (agent as any).turnDetection = cfg.turnDetection;
+    if (cfg.interruption !== undefined) (agent as any).interruption = cfg.interruption;
+    if (cfg.phone) (agent as any).phone = new Phone(cfg.phone);
+
+    await agent.start();
+    return agent;
+}
+
 // ── Server command ───────────────────────────────────────────────────────
 
 export async function server(argv: string[]): Promise<void> {
     const args = parseArgs(argv, {
         positional: "file",
         flags: [],
-        values: ["--port", "--host"],
+        values: ["--port", "--host", "--config"],
     });
-
-    const input = args.positional;
-    if (!input) {
-        throw new CliError("Usage: pinecall server <AgentName|folder> [--port=4100]");
-    }
 
     const env = resolveEnv();
     requireOpenAI(env);
 
-    const port = parseInt(args.values.get("--port") ?? "4100", 10);
-    const host = args.values.get("--host") ?? "0.0.0.0";
+    const input = args.positional;
+    const configFlag = args.values.get("--config");
 
-    const files = await resolveFiles(input);
+    // ── Determine mode ──
+    let configMode: { path: string; config: ServerConfig } | null = null;
+
+    if (!input || configFlag) {
+        // Config mode: --config=file.json or auto-detect pinecall.json
+        configMode = await findConfig(configFlag);
+        if (!configMode && !input) {
+            throw new CliError(
+                "Usage: pinecall server <AgentName|folder> [--port=4100]\n" +
+                "       pinecall server [--config=pinecall.json]\n\n" +
+                "No agent file specified and no pinecall.json found in current directory."
+            );
+        }
+    }
+
+    const port = parseInt(args.values.get("--port") ?? String(configMode?.config.port ?? 4100), 10);
+    const host = args.values.get("--host") ?? configMode?.config.host ?? "0.0.0.0";
 
     // ── Banner ──
     console.log("");
     console.log(`  ${chalk.hex("#7C3AED")("⚡")} ${chalk.bold("pinecall server")}`);
     console.log("");
 
-    // Start EventServer (REST + WS on single port)
     const { EventServer } = await import("@pinecall/sdk/server");
     let pc: any = null;
 
-    const agents: any[] = [];
-    for (const file of files) {
-        const { AgentClass, name } = await loadAgentClass(file);
+    interface DeployedAgent { agent: any; name: string; }
+    const deployed: DeployedAgent[] = [];
 
-        const agent = new AgentClass({
-            apiKey: env.apiKey,
-            openaiKey: env.openaiKey,
-            url: env.url,
-        });
+    if (configMode) {
+        // ── Config mode: deploy from JSON ──
+        const { config } = configMode;
+        if (!config.agents?.length) {
+            throw new CliError(`No agents defined in ${configMode.path}`);
+        }
 
-        await agent.start();
-        if (!pc) pc = agent.pinecall;  // grab Pinecall client from first agent
-        agents.push({ agent, name });
+        console.log(`  ${chalk.dim("config")} ${configMode.path}`);
+        console.log("");
+
+        for (const agentCfg of config.agents) {
+            const agent = await deployConfigAgent(agentCfg, env);
+            if (!pc) pc = agent.pinecall;
+            deployed.push({ agent, name: agentCfg.name });
+        }
+    } else {
+        // ── File mode: load JS/TS agents ──
+        const files = await resolveFiles(input!);
+
+        for (const file of files) {
+            const { AgentClass, name } = await loadAgentClass(file);
+            const agent = new AgentClass({
+                apiKey: env.apiKey,
+                openaiKey: env.openaiKey,
+                url: env.url,
+            });
+            await agent.start();
+            if (!pc) pc = agent.pinecall;
+            deployed.push({ agent, name });
+        }
     }
 
     const eventServer = new EventServer({ port, host, pinecall: pc });
 
-    for (const { agent, name } of agents) {
+    for (const { agent, name } of deployed) {
         const token = eventServer.attach(agent.core);
-
         const phone = agent.phone?.number ?? "—";
         const model = agent.model ?? "—";
         console.log(`  ${chalk.green("✓")} ${chalk.hex("#7C3AED")(name.padEnd(20))} ${chalk.dim("model=")}${model} ${chalk.dim("phone=")}${phone}`);
         console.log(`    ${chalk.dim("token=")}${token}`);
+    }
+
+    // ── DB persistence hooks (config mode only) ──
+    if (configMode) {
+        const cfgPath = configMode.path;
+        const cfgData = configMode.config;
+
+        // Intercept EventServer's POST /agents to also persist
+        const origHandleApi = (eventServer as any)._handleApi.bind(eventServer);
+        (eventServer as any)._handleApi = async (req: any, res: any, body: any) => {
+            const url = req.url ?? "/";
+            const method = req.method ?? "GET";
+
+            // POST /agents — deploy + persist
+            if (method === "POST" && url === "/agents") {
+                const { name, model, voice, language, stt, phone, instructions, greeting } = body;
+                if (!name) {
+                    (eventServer as any)._json(res, 400, { error: "name is required" });
+                    return;
+                }
+
+                // Check if already exists
+                if (cfgData.agents.some(a => a.name === name)) {
+                    (eventServer as any)._json(res, 409, { error: `Agent '${name}' already exists` });
+                    return;
+                }
+
+                const agentCfg: AgentConfig = { name, model, voice, language, stt, phone, instructions, greeting };
+                // Clean undefined values
+                Object.keys(agentCfg).forEach(k => {
+                    if ((agentCfg as any)[k] === undefined) delete (agentCfg as any)[k];
+                });
+
+                try {
+                    const agent = await deployConfigAgent(agentCfg, env);
+                    const token = eventServer.attach(agent.core);
+                    deployed.push({ agent, name });
+
+                    // Persist to DB
+                    cfgData.agents.push(agentCfg);
+                    saveConfig(cfgPath, cfgData);
+
+                    console.log(`  ${chalk.green("+")} ${chalk.hex("#7C3AED")(name)} deployed + persisted`);
+                    (eventServer as any)._json(res, 201, { ok: true, token, agent: agentCfg });
+                } catch (err: any) {
+                    (eventServer as any)._json(res, 500, { error: err.message });
+                }
+                return;
+            }
+
+            // DELETE /agents/:name — undeploy + remove from DB
+            const deleteMatch = method === "DELETE" && url.match(/^\/agents\/(.+)$/);
+            if (deleteMatch) {
+                const name = decodeURIComponent(deleteMatch[1]);
+                const idx = deployed.findIndex(d => d.name === name);
+                if (idx === -1) {
+                    (eventServer as any)._json(res, 404, { error: `Agent '${name}' not found` });
+                    return;
+                }
+
+                const { agent } = deployed[idx];
+                eventServer.detach(agent.core);
+                await agent.stop();
+                deployed.splice(idx, 1);
+
+                // Remove from DB
+                cfgData.agents = cfgData.agents.filter(a => a.name !== name);
+                saveConfig(cfgPath, cfgData);
+
+                console.log(`  ${chalk.red("−")} ${chalk.hex("#7C3AED")(name)} removed + unpersisted`);
+                (eventServer as any)._json(res, 200, { ok: true });
+                return;
+            }
+
+            // Fall through to original handler
+            origHandleApi(req, res, body);
+        };
     }
 
     eventServer.start();
@@ -131,15 +326,21 @@ export async function server(argv: string[]): Promise<void> {
     console.log("");
     console.log(`  ${chalk.dim("REST endpoints:")}`);
     console.log(`    GET    /agents              ${chalk.dim("List agents")}`);
-    console.log(`    POST   /agents              ${chalk.dim("Deploy agent")}`);
+    console.log(`    POST   /agents              ${chalk.dim("Deploy agent" + (configMode ? " + persist" : ""))}`);
     console.log(`    PATCH  /agents/:name        ${chalk.dim("Configure agent")}`);
-    console.log(`    DELETE /agents/:name        ${chalk.dim("Remove agent")}`);
+    console.log(`    DELETE /agents/:name        ${chalk.dim("Remove agent" + (configMode ? " + unpersist" : ""))}`);
     console.log(`    POST   /agents/:name/dial   ${chalk.dim("Outbound call")}`);
     console.log(`    GET    /calls               ${chalk.dim("List active calls")}`);
     console.log(`    PATCH  /calls/:id           ${chalk.dim("Configure call")}`);
     console.log(`    POST   /calls/:id/hangup    ${chalk.dim("Hang up call")}`);
     console.log(`    GET    /phones              ${chalk.dim("List phone numbers")}`);
     console.log(`    GET    /voices              ${chalk.dim("List TTS voices")}`);
+
+    if (configMode) {
+        console.log("");
+        console.log(`  ${chalk.dim("DB")}  ${configMode.path}  ${chalk.dim("(auto-persist)")}`);
+    }
+
     console.log("");
     console.log(`  ${chalk.dim("WebSocket")}  ws://${host}:${port}  ${chalk.dim("(events + commands)")}`);
     console.log("");

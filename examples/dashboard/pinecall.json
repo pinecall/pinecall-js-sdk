@@ -1,0 +1,14 @@
+{
+  "port": 4200,
+  "agents": [
+    {
+      "name": "demo-support",
+      "model": "gpt-4.1-nano",
+      "voice": "elevenlabs:EXAVITQu4vr4xnSDxMaL",
+      "language": "en",
+      "phone": "+13186330963",
+      "instructions": "You are a friendly demo support agent for Pinecall. Help users with any questions about our voice AI platform. Be concise and helpful.",
+      "greeting": "Hi! I'm the Pinecall demo agent. How can I help you today?"
+    }
+  ]
+}
