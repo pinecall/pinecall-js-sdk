@@ -68,8 +68,8 @@ export class Agent {
     maxTokens?: number;
     /** System prompt sent to the server-side LLM. */
     instructions = "You are a helpful voice assistant. Be concise.";
-    /** Fallback greeting (channel greeting takes priority). */
-    greeting?: string;
+    /** Fallback greeting (channel greeting takes priority). String or async callback for dynamic greetings. */
+    greeting?: string | ((call: Call) => string | Promise<string>);
     /** Which turn event to respond on. Default: "eager.turn". */
     turnEvent: "eager.turn" | "turn.end" = "eager.turn";
 
@@ -195,10 +195,12 @@ export class Agent {
     /** Make an outbound call. */
     async dial(opts: { to: string; from: string; greeting?: string }): Promise<Call> {
         if (!this._started) await this.start();
+        const greetingRaw = opts.greeting ?? this.greeting;
+        const greetingStr = typeof greetingRaw === "string" ? greetingRaw : undefined;
         return this._core.dial({
             to: opts.to,
             from: opts.from,
-            greeting: opts.greeting ?? this.greeting,
+            greeting: greetingStr,
         });
     }
 
@@ -279,7 +281,7 @@ export class Agent {
     }
 
     /** @internal */
-    protected _greetingForCall(call: Call): string | undefined {
+    protected _greetingForCall(call: Call): string | ((call: Call) => string | Promise<string>) | undefined {
         const all: Channel[] = [];
         if (this.phone) all.push(this.phone);
         if (this.channels) all.push(...this.channels);
@@ -295,10 +297,11 @@ export class Agent {
 
     /** @internal */
     private _wireEvents(): void {
-        this._core.on("call.started", (call) => {
-            const greeting = this._greetingForCall(call) ?? this.greeting;
-            if (greeting) {
-                call.say(greeting);
+        this._core.on("call.started", async (call) => {
+            const raw = this._greetingForCall(call) ?? this.greeting;
+            if (raw) {
+                const text = typeof raw === "function" ? await raw(call) : raw;
+                if (text) call.say(text);
             }
 
             this.onCallStarted(call);

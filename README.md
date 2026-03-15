@@ -21,6 +21,7 @@ npm install @pinecall/sdk
   - [Agent Base Class](#agent-base-class)
   - [GPTAgent](#gptagent)
   - [Channels (Phone, WebRTC)](#channels)
+  - [Server-Side LLM](#server-side-llm)
   - [Tool Calling](#tool-calling)
   - [ConversationHistory](#conversationhistory)
 - [CLI](#cli)
@@ -996,7 +997,7 @@ stt: {
 // Shortcut: "deepgram-flux" or "flux"
 ```
 
-> **Note:** When using Deepgram Flux in native mode, `eager.turn` events are deferred until the `turn.end` confirmation to prevent premature LLM invocation on partial transcripts. Use `turnEvent: "eager.turn"` (the default) for the best experience with Flux.
+> **Note:** `eager.turn` works best with **Nova** + `smart_turn` — the `is_final` transcript fires `eager.turn`, then smart_turn confirms in ~300ms. With **Flux**, use `turnEvent: "turn.end"` instead — Flux transcripts change continuously and `eager.turn` would trigger the LLM on unstable text.
 
 #### Gladia
 

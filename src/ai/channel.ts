@@ -36,8 +36,8 @@ export class Channel {
     turnDetection?: ChannelConfig["turnDetection"];
     /** Interruption — false to disable, or { energy_threshold_db, min_duration_ms }. */
     interruption?: ChannelConfig["interruption"];
-    /** Per-channel greeting — overrides agent greeting for this channel. */
-    greeting?: string;
+    /** Per-channel greeting — overrides agent greeting. String or callback for dynamic greetings. */
+    greeting?: string | ((call: import("../call.js").Call) => string | Promise<string>);
     /** Raw session config for anything not covered by shortcuts. */
     config?: Partial<SessionConfig>;
 
