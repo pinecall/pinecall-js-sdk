@@ -101,7 +101,14 @@ export function useSocket(): SocketState {
     switch (eventType) {
       // ─── Server ─────────────────────────────────────────────────────
       case 'server.connected':
+        setConnected(true);
         setAgents(data.agents ?? []);
+        break;
+      case 'server.disconnected':
+        setConnected(false);
+        break;
+      case 'server.reconnecting':
+        // Event logged automatically via addEvent above
         break;
 
       // ─── Phone events ───────────────────────────────────────────────

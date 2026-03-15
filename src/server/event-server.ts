@@ -207,6 +207,20 @@ export class EventServer {
         });
 
         this._http.listen(this._port, this._host);
+
+        // Forward SDK connection lifecycle to dashboard WS clients
+        if (this._pc) {
+            this._pc.on("disconnected", (reason: string) => {
+                this._broadcastAll({ event: "server.disconnected", reason });
+            });
+            this._pc.on("reconnecting", (attempt: number) => {
+                this._broadcastAll({ event: "server.reconnecting", attempt });
+            });
+            this._pc.on("connected", () => {
+                const agents = [...this._agents].map(a => a.id);
+                this._broadcastAll({ event: "server.connected", agents, port: this._port });
+            });
+        }
     }
 
     /** Stop the server. */
@@ -501,6 +515,17 @@ export class EventServer {
                 authed.send(json);
             } else if (authed._agentScope.has(agentId)) {
                 authed.send(json);
+            }
+        }
+    }
+
+    /** Broadcast to ALL connected clients (unscoped — for server lifecycle events). */
+    private _broadcastAll(data: Record<string, unknown>): void {
+        if (!this._wss || this._wss.clients.size === 0) return;
+        const json = JSON.stringify(data);
+        for (const client of this._wss.clients) {
+            if (client.readyState === WebSocket.OPEN) {
+                client.send(json);
             }
         }
     }
