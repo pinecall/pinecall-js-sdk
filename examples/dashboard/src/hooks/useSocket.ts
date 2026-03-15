@@ -172,16 +172,20 @@ export function useSocket(): SocketState {
         break;
 
       case 'user.message':
+        // Use !finalized to find the target bubble — NOT "no bot after".
+        // Reason: eager.turn can trigger bot.speaking BEFORE user.message
+        // arrives, so a bot bubble may appear between user.speaking and
+        // user.message for the SAME turn.
         if (data.text) {
           setMessages(prev => {
-            const lastIdx = prev.findLastIndex(m => m.role === 'user');
-            const hasResponseAfter = lastIdx >= 0 && prev.slice(lastIdx + 1).some(m => m.role !== 'user');
-            if (lastIdx >= 0 && !hasResponseAfter) {
-              return prev.map((m, i) => i === lastIdx
+            const idx = prev.findLastIndex(m => m.role === 'user' && !m.finalized);
+            if (idx >= 0) {
+              return prev.map((m, i) => i === idx
                 ? { ...m, text: data.text, isInterim: false, messageId: data.message_id }
                 : m
               );
             }
+            // Fallback: no unfinalized user msg, create one
             return [...prev, {
               id: Date.now(), role: 'user' as const, text: data.text,
               isInterim: false, messageId: data.message_id,
@@ -191,10 +195,12 @@ export function useSocket(): SocketState {
         break;
 
       // ─── Turn detection ─────────────────────────────────────────────
+      // These also use !finalized to find the correct user bubble,
+      // since bot.speaking can arrive before turn.end due to eager.turn.
       case 'turn.pause':
         setMessages(prev => {
-          const idx = prev.findLastIndex(m => m.role === 'user');
-          if (idx < 0 || prev.slice(idx + 1).some(m => m.role !== 'user')) return prev;
+          const idx = prev.findLastIndex(m => m.role === 'user' && !m.finalized);
+          if (idx < 0) return prev;
           return prev.map((m, i) => i === idx
             ? { ...m, status: 'pause' as const, probability: data.probability, isInterim: false }
             : m
@@ -205,8 +211,8 @@ export function useSocket(): SocketState {
 
       case 'turn.end':
         setMessages(prev => {
-          const idx = prev.findLastIndex(m => m.role === 'user');
-          if (idx < 0 || prev.slice(idx + 1).some(m => m.role !== 'user')) return prev;
+          const idx = prev.findLastIndex(m => m.role === 'user' && !m.finalized);
+          if (idx < 0) return prev;
           return prev.map((m, i) => i === idx
             ? { ...m, status: 'end' as const, probability: data.probability, finalized: true, isInterim: false }
             : m
@@ -217,8 +223,8 @@ export function useSocket(): SocketState {
 
       case 'turn.resumed':
         setMessages(prev => {
-          const idx = prev.findLastIndex(m => m.role === 'user');
-          if (idx < 0 || prev.slice(idx + 1).some(m => m.role !== 'user')) return prev;
+          const idx = prev.findLastIndex(m => m.role === 'user' && !m.finalized);
+          if (idx < 0) return prev;
           return prev.map((m, i) => i === idx ? { ...m, status: null, finalized: false } : m);
         });
         setCallStatus('listening');
