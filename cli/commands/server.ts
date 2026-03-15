@@ -323,6 +323,15 @@ export async function server(argv: string[]): Promise<void> {
 
     eventServer.start();
 
+    // Auto-open browser when UI is enabled
+    if (ui) {
+        const dashUrl = `http://${host === "0.0.0.0" ? "localhost" : host}:${port}`;
+        const { exec } = await import("node:child_process");
+        const platform = process.platform;
+        const cmd = platform === "darwin" ? `open "${dashUrl}"` : platform === "win32" ? `start "${dashUrl}"` : `xdg-open "${dashUrl}"`;
+        exec(cmd, () => {}); // fire-and-forget, ignore errors
+    }
+
     console.log("");
     console.log(`  ${chalk.dim("─".repeat(50))}`);
     console.log(`  ${chalk.bold("Server")}  http://${host}:${port}  ${chalk.dim("(REST + WS)")}`);
