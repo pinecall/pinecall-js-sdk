@@ -8,7 +8,7 @@
  * ```typescript
  * import { PinecallWebRTC } from "@pinecall/sdk/webrtc";
  *
- * const webrtc = new PinecallWebRTC("https://your-server.pinecall.ai", "my-agent");
+ * const webrtc = new PinecallWebRTC("my-agent");
  * webrtc.on("bot.word", (data) => console.log(data.word));
  * await webrtc.connect();
  * // ... later
@@ -22,6 +22,19 @@
 // ─── Types ───────────────────────────────────────────────────────────────
 
 export interface WebRTCOptions {
+    /** Pinecall server URL. Default: "https://voice.pinecall.io" */
+    server?: string;
+    /**
+     * Ephemeral WebRTC token from your backend.
+     *
+     * Get it from: POST https://app.pinecall.io/api/sdk/webrtc-token
+     * with your pk_ API key + { agent_id: "..." }.
+     *
+     * If provided, the token authenticates the connection and scopes it
+     * to your organization. If omitted, falls back to plain app_id
+     * (dev mode only).
+     */
+    token?: string;
     /** Audio constraints for getUserMedia. */
     audio?: MediaStreamConstraints["audio"];
     /** ICE servers override. If not provided, fetched from server. */
@@ -48,6 +61,8 @@ export interface WebRTCEventMap {
     "config.updated": (data: { config: Record<string, unknown> }) => void;
 }
 
+const DEFAULT_SERVER = "https://voice.pinecall.io";
+
 // ─── PinecallWebRTC ──────────────────────────────────────────────────────
 
 export class PinecallWebRTC {
@@ -62,12 +77,30 @@ export class PinecallWebRTC {
     private _pcId: string | null = null;
     private _sessionId: string | null = null;
     private _connected = false;
+    private _muted = false;
     private _listeners: Map<string, Set<Function>> = new Map();
     private _pingInterval: ReturnType<typeof setInterval> | null = null;
 
-    constructor(serverUrl: string, appId: string, options?: WebRTCOptions) {
+    /**
+     * Create a PinecallWebRTC instance.
+     *
+     * Connects directly to Pinecall cloud (voice.pinecall.io) via WebRTC.
+     * Never connects to your local SDK server — this is a browser-only client.
+     *
+     * @param appId - Agent ID to connect to (must be registered by your SDK server).
+     * @param options - WebRTC options. Use `options.server` for self-hosted Pinecall servers.
+     *
+     * @example
+     * ```typescript
+     * const webrtc = new PinecallWebRTC("my-agent");
+     * webrtc.on("bot.speaking", (d) => console.log(d.text));
+     * await webrtc.connect();
+     * ```
+     */
+    constructor(appId: string, options?: WebRTCOptions) {
+        const server = options?.server ?? DEFAULT_SERVER;
         // Normalize URL — strip trailing slash, convert ws:// to http://
-        this._serverUrl = serverUrl
+        this._serverUrl = server
             .replace(/\/$/, "")
             .replace(/^wss:\/\//, "https://")
             .replace(/^ws:\/\//, "http://");
@@ -112,18 +145,16 @@ export class PinecallWebRTC {
                 this._remoteAudio.srcObject = e.streams[0];
             };
 
-            // 6. Handle data channel (created by server)
-            this._pc.ondatachannel = (e) => {
-                this._dataChannel = e.channel;
-                this._dataChannel.onmessage = (msg) => {
-                    try {
-                        const data = JSON.parse(msg.data);
-                        const event = data.event;
-                        if (event) {
-                            this._emit(event, data);
-                        }
-                    } catch { /* ignore non-JSON */ }
-                };
+            // 6. Create data channel (browser creates it, server receives via ondatachannel)
+            this._dataChannel = this._pc.createDataChannel("events", { ordered: true });
+            this._dataChannel.onmessage = (msg) => {
+                try {
+                    const data = JSON.parse(msg.data);
+                    const event = data.event;
+                    if (event) {
+                        this._emit(event, data);
+                    }
+                } catch { /* ignore non-JSON */ }
             };
 
             // 7. Connection state
@@ -149,17 +180,24 @@ export class PinecallWebRTC {
             await this._waitForIceGathering(2000);
 
             // 10. Send offer to server
-            const res = await fetch(
-                `${this._serverUrl}/webrtc/offer?app_id=${encodeURIComponent(this._appId)}`,
-                {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        sdp: this._pc.localDescription!.sdp,
-                        type: this._pc.localDescription!.type,
-                    }),
-                },
-            );
+            const offerBody: Record<string, unknown> = {
+                sdp: this._pc.localDescription!.sdp,
+                type: this._pc.localDescription!.type,
+            };
+
+            // Auth: token (production) or app_id query param (dev)
+            let offerUrl = `${this._serverUrl}/webrtc/offer`;
+            if (this._options.token) {
+                offerBody.token = this._options.token;
+            } else {
+                offerUrl += `?app_id=${encodeURIComponent(this._appId)}`;
+            }
+
+            const res = await fetch(offerUrl, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(offerBody),
+            });
 
             if (!res.ok) {
                 const err = await res.json().catch(() => ({ detail: res.statusText }));
@@ -217,11 +255,40 @@ export class PinecallWebRTC {
         }
     }
 
+    // ── Mute / Unmute ────────────────────────────────────────────────────
+
+    /** Mute the microphone. Disables the audio track AND tells the server to pause STT. */
+    mute(): void {
+        if (this._muted) return;
+        this._muted = true;
+        this._localStream?.getAudioTracks().forEach(t => t.enabled = false);
+        this.send({ action: "mute" });
+        this._emit("muted");
+    }
+
+    /** Unmute the microphone. Enables the audio track AND tells the server to resume STT. */
+    unmute(): void {
+        if (!this._muted) return;
+        this._muted = false;
+        this._localStream?.getAudioTracks().forEach(t => t.enabled = true);
+        this.send({ action: "unmute" });
+        this._emit("unmuted");
+    }
+
+    /** Toggle mute state. Returns the new mute state. */
+    toggleMute(): boolean {
+        if (this._muted) this.unmute(); else this.mute();
+        return this._muted;
+    }
+
     // ── State ────────────────────────────────────────────────────────────
 
     get isConnected(): boolean { return this._connected; }
+    get isMuted(): boolean { return this._muted; }
     get sessionId(): string | null { return this._sessionId; }
     get pcId(): string | null { return this._pcId; }
+    /** The local MediaStream (mic). Useful for audio visualization. */
+    get localStream(): MediaStream | null { return this._localStream; }
 
     // ── Events ───────────────────────────────────────────────────────────
 

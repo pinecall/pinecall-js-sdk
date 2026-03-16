@@ -44,6 +44,19 @@ export default defineConfig([
         target: "es2020",
         minify: false,
     },
+    // WebRTC browser bundle: IIFE for <script> tag / CDN usage
+    // Usage: <script src="pinecall-webrtc.iife.js"></script>
+    //        const webrtc = new Pinecall.WebRTC("http://localhost:4100", "my-agent");
+    {
+        entry: { "pinecall-webrtc.iife": "src/webrtc-client.ts" },
+        format: ["iife"],
+        globalName: "Pinecall",
+        splitting: false,
+        sourcemap: false,
+        target: "es2020",
+        minify: true,
+        outDir: "dist",
+    },
     // CLI binary (ESM, bundled with shebang)
     {
         entry: { "cli/index": "cli/index.ts" },

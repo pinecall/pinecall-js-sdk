@@ -1129,7 +1129,7 @@ import { PinecallWebRTC } from "@pinecall/sdk/webrtc";
 ### Quick Example
 
 ```typescript
-const webrtc = new PinecallWebRTC("https://your-server.com:4100", "my-agent");
+const webrtc = new PinecallWebRTC("my-agent");
 
 webrtc.on("connected", () => console.log("Connected!"));
 webrtc.on("bot.word", (data) => console.log(data.word));
@@ -1138,9 +1138,10 @@ webrtc.on("turn.end", (data) => console.log("Turn ended"));
 
 await webrtc.connect();
 
-// Mute/unmute via data channel
-webrtc.send({ action: "mute" });
-webrtc.send({ action: "unmute" });
+// Mute/unmute (local track + server-side STT)
+webrtc.mute();
+webrtc.unmute();
+webrtc.toggleMute();
 
 // Disconnect
 webrtc.disconnect();
@@ -1149,22 +1150,53 @@ webrtc.disconnect();
 ### Constructor
 
 ```typescript
-new PinecallWebRTC(serverUrl: string, appId: string, options?: WebRTCOptions)
+new PinecallWebRTC(appId: string, options?: WebRTCOptions)
 ```
 
 | Param | Type | Description |
 |-------|------|-------------|
-| `serverUrl` | `string` | Pinecall server URL (e.g., `"https://your-server.com:4100"`) |
-| `appId` | `string` | Agent ID to connect to |
+| `appId` | `string` | Agent ID — the name you gave your agent in the SDK: `pc.agent("my-agent", ...)` |
 | `options` | `WebRTCOptions` | Optional configuration |
+
+> The `appId` is the agent name defined in your server-side code. For example, if your agent file has `pc.agent("receptionist", { ... })`, then `appId` is `"receptionist"`.
 
 ### WebRTCOptions
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
+| `token` | `string` | — | **Recommended.** Ephemeral WebRTC token from your backend (see [Authentication](#webrtc-authentication)) |
+| `server` | `string` | `"https://voice.pinecall.io"` | Pinecall server URL (for self-hosted servers) |
 | `audio` | `MediaStreamConstraints["audio"]` | Echo/noise cancellation enabled | Audio constraints for `getUserMedia` |
 | `iceServers` | `RTCIceServer[]` | Fetched from server | Custom ICE servers |
 | `autoReconnect` | `boolean` | `false` | Auto-reconnect on disconnect |
+
+### WebRTC Authentication
+
+In production, WebRTC connections should be authenticated with an ephemeral token. This prevents agent ID collisions and ensures only your users can connect to your agents.
+
+**Flow:**
+1. Your backend calls `POST https://app.pinecall.io/api/sdk/webrtc-token` with your `pk_` API key
+2. Your backend returns the token to the browser
+3. The browser passes the token to `PinecallWebRTC`
+
+```typescript
+// Your backend (Node.js example)
+app.get("/webrtc-token", async (req, res) => {
+  const { token } = await fetch("https://app.pinecall.io/api/sdk/webrtc-token", {
+    method: "POST",
+    headers: { "X-API-Key": "pk_your_key", "Content-Type": "application/json" },
+    body: JSON.stringify({ agent_id: "my-agent" }),
+  }).then(r => r.json());
+  res.json({ token });
+});
+
+// Browser
+const { token } = await fetch("/webrtc-token").then(r => r.json());
+const webrtc = new PinecallWebRTC("my-agent", { token });
+await webrtc.connect();
+```
+
+> **Dev mode:** If no `token` is provided, the client falls back to plain `app_id` (no auth). This works for local development but should not be used in production.
 
 ### Methods
 

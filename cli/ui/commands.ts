@@ -486,15 +486,15 @@ async function handleWebRTC(ctx: CommandContext, args: string[]): Promise<void> 
     }
 
     // Resolve app_id from agent
-    const appId = (ctx.agent as any)._appId ?? (ctx.agent as any).appId ?? args[0];
+    const appId = ctx.agent.id ?? args[0];
     if (!appId) {
         log(`${ERR("Cannot determine app_id. Pass it as argument:")} /webrtc my-agent`);
         return;
     }
 
-    // Resolve server URL
-    const serverUrl = (ctx.pc as any)?._url ?? (ctx.pc as any)?.url ?? "http://localhost:8765";
-    const httpUrl = serverUrl.replace(/^wss:\/\//, "https://").replace(/^ws:\/\//, "http://");
+    // Resolve Pinecall server URL from the SDK client
+    const wsUrl = (ctx.pc as any)?._opts?.url ?? "wss://voice.pinecall.io/client";
+    const httpUrl = wsUrl.replace(/\/client\/?$/, "").replace(/^wss:\/\//, "https://").replace(/^ws:\/\//, "http://");
 
     const http = await import("node:http");
     const { exec } = await import("node:child_process");

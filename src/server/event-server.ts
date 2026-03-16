@@ -268,6 +268,23 @@ export class EventServer {
         const url = req.url ?? "/";
         const method = req.method ?? "GET";
 
+        // Serve WebRTC IIFE bundle at /pinecall-webrtc.js
+        if (method === "GET" && url === "/pinecall-webrtc.js") {
+            const bundlePath = join(__dirname, "..", "pinecall-webrtc.iife.global.js");
+            if (existsSync(bundlePath)) {
+                const content = readFileSync(bundlePath);
+                res.writeHead(200, {
+                    "Content-Type": "application/javascript",
+                    "Cache-Control": "public, max-age=3600",
+                    "Access-Control-Allow-Origin": "*",
+                });
+                res.end(content);
+            } else {
+                this._json(res, 404, { error: "WebRTC bundle not found. Run 'npx tsup' to build." });
+            }
+            return;
+        }
+
         // GET /server-info — Pinecall server URL + app IDs (for WebRTC)
         if (method === "GET" && url === "/server-info") {
             const wsUrl = (this._pc as any)?._opts?.url ?? "wss://voice.pinecall.io/client";

@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pinecall WebRTC Demo — Pure HTML</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Inter', sans-serif; }
+    .scrollbar-thin { scrollbar-width: thin; scrollbar-color: rgba(50,50,80,0.4) transparent; }
+    .scrollbar-thin::-webkit-scrollbar { width: 5px; }
+    .scrollbar-thin::-webkit-scrollbar-thumb { background: rgba(50,50,80,0.4); border-radius: 3px; }
+    @keyframes fade-in { from { opacity:0; transform:translateY(4px) } to { opacity:1; transform:translateY(0) } }
+    .animate-fade-in { animation: fade-in 0.2s ease-out; }
+  </style>
+</head>
+<body class="bg-[#0a0a14] text-white min-h-screen flex items-center justify-center p-4">
+
+  <div class="w-full max-w-3xl flex flex-col gap-4">
+    <!-- Header -->
+    <div class="flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <span class="text-lg">🌲</span>
+        <span class="font-semibold text-sm">Pinecall</span>
+        <span class="text-[10px] px-2 py-0.5 rounded-full bg-green-500/10 text-green-400 font-medium">WebRTC Demo</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <span id="duration" class="text-xs font-mono text-gray-500 hidden">0:00</span>
+        <button id="eventsToggle" onclick="toggleEvents()"
+          class="text-xs px-3 py-1.5 rounded-lg bg-[#1a1a2e] border border-gray-800 text-gray-400 hover:text-white transition">
+          Events <span id="eventCount" class="text-gray-600">(0)</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="flex gap-4" style="height: 480px">
+      <!-- Chat panel -->
+      <div class="flex-1 flex flex-col bg-[#12121e] rounded-2xl border border-gray-800/60 overflow-hidden">
+        <!-- Messages -->
+        <div id="chat" class="flex-1 overflow-y-auto p-4 space-y-3 scrollbar-thin">
+          <p class="text-gray-600 text-sm text-center mt-40">Press the button to start talking</p>
+        </div>
+
+        <!-- Controls -->
+        <div class="flex items-center justify-center gap-3 py-4 border-t border-gray-800/40">
+          <button id="muteBtn" onclick="doMute()"
+            class="hidden w-11 h-11 rounded-full bg-[#1e1e2e] border border-gray-700 text-lg hover:border-gray-500 transition cursor-pointer">🎙️</button>
+          <button id="callBtn" onclick="toggleCall()"
+            class="w-14 h-14 rounded-full bg-gradient-to-br from-green-500 to-emerald-600 text-2xl shadow-lg shadow-green-500/25 hover:scale-105 active:scale-95 transition cursor-pointer">🎙️</button>
+          <button id="sendBtn" onclick="sendDC()"
+            class="hidden w-11 h-11 rounded-full bg-[#1e1e2e] border border-gray-700 text-sm hover:border-gray-500 transition cursor-pointer" title="Send data channel message">📤</button>
+        </div>
+        <p id="status" class="text-center text-[10px] text-gray-600 pb-3">Ready</p>
+      </div>
+
+      <!-- Events panel (toggleable) -->
+      <div id="eventsPanel" class="hidden w-72 flex flex-col bg-[#12121e] rounded-2xl border border-gray-800/60 overflow-hidden">
+        <div class="flex items-center justify-between px-4 py-3 border-b border-gray-800/40">
+          <span class="text-[11px] font-medium uppercase tracking-wider text-gray-500">Data Channel Events</span>
+          <button onclick="clearEvents()" class="text-gray-600 hover:text-gray-400 text-xs cursor-pointer">Clear</button>
+        </div>
+        <div id="eventsList" class="flex-1 overflow-y-auto scrollbar-thin"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pinecall WebRTC SDK IIFE bundle -->
+  <script src="../../dist/pinecall-webrtc.iife.global.js"></script>
+  <script>
+    // ── Configuration ─────────────────────────────────────────────
+    const AGENT_ID = 'minimal';
+    const TOKEN_URL = ''; // Your backend's token endpoint (empty = dev mode)
+
+    const { PinecallWebRTC } = Pinecall;
+    let webrtc = null;
+    let events = [];
+    let durationTimer = null;
+    let callStart = 0;
+    let botMessages = {}; // messageId → DOM element for word-by-word updates
+
+    // ── Chat ──────────────────────────────────────────────────────
+    function addMsg(role, text, opts = {}) {
+      const placeholder = chat.querySelector('p.text-gray-600');
+      if (placeholder) placeholder.remove();
+
+      const d = document.createElement('div');
+      d.className = `${role === 'user' ? 'text-right' : role === 'system' ? 'text-center' : 'text-left'} animate-fade-in`;
+      const b = document.createElement('span');
+
+      if (role === 'system') {
+        b.className = 'inline-block bg-purple-500/10 border border-purple-500/20 text-purple-300 px-3 py-1.5 rounded-full text-xs';
+      } else if (role === 'user') {
+        b.className = `inline-block bg-green-900/40 border ${opts.interim ? 'border-dashed border-green-700/20 opacity-50' : 'border-green-700/30'} text-green-100 px-3 py-2 rounded-2xl text-sm max-w-[80%]`;
+      } else {
+        b.className = 'inline-block bg-[#1a1a2e] border border-gray-700/40 text-gray-200 px-3 py-2 rounded-2xl text-sm max-w-[80%]';
+      }
+      b.textContent = text;
+      if (opts.id) b.id = opts.id;
+      d.appendChild(b);
+      chat.appendChild(d);
+      chat.scrollTop = chat.scrollHeight;
+      return b;
+    }
+
+    function updateMsg(id, text, opts = {}) {
+      const el = document.getElementById(id);
+      if (el) {
+        if (text) el.textContent = text;
+        if (opts.interrupted) el.classList.add('line-through', 'opacity-40');
+        if (opts.done) el.classList.remove('animate-pulse');
+      }
+    }
+
+    // ── Events ────────────────────────────────────────────────────
+    function addEvent(evt) {
+      events.push(evt);
+      eventCount.textContent = `(${events.length})`;
+      const el = document.createElement('div');
+      el.className = 'px-3 py-2 border-b border-gray-800/30 cursor-pointer hover:bg-white/[.03] transition text-[11px]';
+
+      const dot = evt.event.startsWith('user') ? '🟢' : evt.event.startsWith('bot') ? '🟣' : '🔵';
+      el.innerHTML = `<div class="flex items-center gap-1.5"><span class="text-[9px]">${dot}</span><span class="font-mono text-gray-300">${evt.event}</span></div>`;
+      el.onclick = () => {
+        const existing = el.querySelector('pre');
+        if (existing) { existing.remove(); return; }
+        const pre = document.createElement('pre');
+        pre.className = 'mt-2 text-[10px] p-2 rounded-md bg-black/30 text-gray-400 overflow-auto max-h-32';
+        pre.style.whiteSpace = 'pre-wrap';
+        pre.style.wordBreak = 'break-all';
+        pre.textContent = JSON.stringify(evt, null, 2);
+        el.appendChild(pre);
+      };
+      eventsList.appendChild(el);
+      eventsList.scrollTop = eventsList.scrollHeight;
+    }
+
+    function clearEvents() {
+      events = [];
+      eventsList.innerHTML = '';
+      eventCount.textContent = '(0)';
+    }
+
+    function toggleEvents() {
+      eventsPanel.classList.toggle('hidden');
+      eventsPanel.classList.toggle('flex');
+    }
+
+    // ── Duration ──────────────────────────────────────────────────
+    function startDuration() {
+      callStart = Date.now();
+      duration.classList.remove('hidden');
+      durationTimer = setInterval(() => {
+        const s = Math.floor((Date.now() - callStart) / 1000);
+        duration.textContent = `${Math.floor(s/60)}:${(s%60).toString().padStart(2,'0')}`;
+      }, 1000);
+    }
+    function stopDuration() {
+      if (durationTimer) { clearInterval(durationTimer); durationTimer = null; }
+    }
+
+    // ── Mute ──────────────────────────────────────────────────────
+    function doMute() {
+      if (!webrtc) return;
+      webrtc.toggleMute();
+      muteBtn.textContent = webrtc.isMuted ? '🔇' : '🎙️';
+    }
+
+    // ── Send data channel ─────────────────────────────────────────
+    function sendDC() {
+      if (!webrtc) return;
+      const msg = prompt('JSON message to send via data channel\ne.g. {"action":"mute"}');
+      if (!msg) return;
+      try {
+        const parsed = JSON.parse(msg);
+        webrtc.send(parsed);
+        addEvent({ event: 'client.send', ...parsed, _direction: 'out' });
+      } catch {
+        alert('Invalid JSON');
+      }
+    }
+
+    // ── Call ───────────────────────────────────────────────────────
+    async function toggleCall() {
+      if (webrtc) {
+        webrtc.disconnect();
+        webrtc = null;
+        stopDuration();
+        callBtn.textContent = '🎙️';
+        callBtn.className = 'w-14 h-14 rounded-full bg-gradient-to-br from-green-500 to-emerald-600 text-2xl shadow-lg shadow-green-500/25 hover:scale-105 active:scale-95 transition cursor-pointer';
+        muteBtn.classList.add('hidden');
+        sendBtn.classList.add('hidden');
+        status.textContent = 'Disconnected';
+        return;
+      }
+
+      status.textContent = 'Connecting…';
+      botMessages = {};
+
+      try {
+        let opts = {};
+        if (TOKEN_URL) {
+          const res = await fetch(TOKEN_URL);
+          const data = await res.json();
+          opts.token = data.token;
+        }
+
+        webrtc = new PinecallWebRTC(AGENT_ID, opts);
+
+        // ── Connection events ────────────────────────────────────
+        webrtc.on('connected', () => {
+          status.textContent = 'Connected — speak!';
+          callBtn.textContent = '✕';
+          callBtn.className = 'w-14 h-14 rounded-full bg-gradient-to-br from-red-500 to-red-700 text-2xl shadow-lg shadow-red-500/25 hover:scale-105 active:scale-95 transition cursor-pointer';
+          muteBtn.classList.remove('hidden');
+          sendBtn.classList.remove('hidden');
+          chat.innerHTML = '';
+          addMsg('system', 'Connected — start talking!');
+          startDuration();
+        });
+
+        webrtc.on('disconnected', (d) => {
+          status.textContent = 'Disconnected';
+          stopDuration();
+          callBtn.textContent = '🎙️';
+          callBtn.className = 'w-14 h-14 rounded-full bg-gradient-to-br from-green-500 to-emerald-600 text-2xl shadow-lg shadow-green-500/25 hover:scale-105 active:scale-95 transition cursor-pointer';
+          muteBtn.classList.add('hidden');
+          sendBtn.classList.add('hidden');
+          webrtc = null;
+          addEvent({ event: 'disconnected', reason: d?.reason });
+        });
+
+        webrtc.on('error', (e) => {
+          addEvent({ event: 'error', message: e?.message });
+        });
+
+        // ── Session ──────────────────────────────────────────────
+        webrtc.on('session.started', (d) => {
+          addMsg('system', `Session ${d.session_id?.slice(0,8)}…`);
+          addEvent({ event: 'session.started', ...d });
+        });
+
+        webrtc.on('session.ended', (d) => {
+          addMsg('system', 'Session ended');
+          addEvent({ event: 'session.ended', ...d });
+        });
+
+        // ── User speech ──────────────────────────────────────────
+        let interimEl = null;
+        webrtc.on('user.speaking', (d) => {
+          if (!interimEl) {
+            interimEl = addMsg('user', d.text, { interim: true });
+          } else {
+            interimEl.textContent = d.text;
+          }
+          addEvent({ event: 'user.speaking', text: d.text });
+        });
+
+        webrtc.on('user.message', (d) => {
+          if (interimEl) {
+            interimEl.textContent = d.text;
+            interimEl.classList.remove('border-dashed', 'opacity-50');
+            interimEl.classList.add('border-solid');
+            interimEl = null;
+          } else {
+            addMsg('user', d.text);
+          }
+          addEvent({ event: 'user.message', text: d.text, message_id: d.message_id });
+        });
+
+        // ── Turn detection ───────────────────────────────────────
+        webrtc.on('turn.pause', (d) => addEvent({ event: 'turn.pause', ...d }));
+        webrtc.on('turn.end', (d) => addEvent({ event: 'turn.end', ...d }));
+
+        // ── Bot speech (word-by-word streaming) ──────────────────
+        webrtc.on('bot.speaking', (d) => {
+          const msgId = `bot-${d.message_id}`;
+          const el = addMsg('bot', d.text || '…', { id: msgId });
+          el.classList.add('animate-pulse');
+          botMessages[d.message_id] = { words: [], el: msgId };
+          addEvent({ event: 'bot.speaking', message_id: d.message_id, text: d.text });
+        });
+
+        webrtc.on('bot.word', (d) => {
+          const entry = botMessages[d.message_id];
+          if (entry) {
+            entry.words[d.word_index ?? entry.words.length] = d.word;
+            updateMsg(entry.el, entry.words.filter(Boolean).join(' '));
+          }
+          // Don't log every word to events (too noisy)
+        });
+
+        webrtc.on('bot.finished', (d) => {
+          const entry = botMessages[d.message_id];
+          if (entry) {
+            if (d.text) updateMsg(entry.el, d.text);
+            updateMsg(entry.el, null, { done: true });
+          }
+          addEvent({ event: 'bot.finished', message_id: d.message_id, duration_ms: d.duration_ms });
+        });
+
+        webrtc.on('bot.interrupted', (d) => {
+          const entry = botMessages[d.message_id];
+          if (entry) updateMsg(entry.el, null, { interrupted: true, done: true });
+          addEvent({ event: 'bot.interrupted', message_id: d.message_id });
+        });
+
+        // ── Config ───────────────────────────────────────────────
+        webrtc.on('config.updated', (d) => addEvent({ event: 'config.updated', ...d }));
+
+        // ── Audio metrics ────────────────────────────────────────
+        webrtc.on('audio.metrics', (d) => {
+          // Update status bar with who's talking
+          if (d.is_speech) {
+            status.textContent = d.source === 'user' ? '🟢 You are speaking' : '🟣 Agent is speaking';
+          }
+        });
+
+        await webrtc.connect();
+      } catch (e) {
+        status.textContent = 'Error: ' + e.message;
+        webrtc = null;
+      }
+    }
+  </script>
+</body>
+</html>
