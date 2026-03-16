@@ -11,7 +11,7 @@ examples/
 │   └── CustomLLM.js     # Custom LLM integration
 │
 ├── webrtc-demo/         # 🌐 WebRTC Demo (pure HTML, no build)
-│   │                    # Events panel, word-by-word streaming,
+│   │                    # Audio waveform, events panel, streaming,
 │   │                    # data channel commands, token auth
 │   └── index.html       # Open directly in browser
 │
@@ -19,9 +19,9 @@ examples/
 │   ├── basic.ts         # Core SDK setup
 │   └── events.ts        # Event handling patterns
 │
-└── ui/                  # 🖥 UI Applications (React + Vite)
-    ├── dashboard/       # Full dashboard — builds to dist/dashboard
-    └── webrtc-player/   # Standalone WebRTC player with waveform
+└── ui/
+    └── dashboard/       # 🖥 Development dashboard (React + Vite)
+                         # Builds to dist/dashboard for SDK server
 ```
 
 ## Quick Start
@@ -29,13 +29,6 @@ examples/
 ### WebRTC Demo (no build required)
 
 Open `examples/webrtc-demo/index.html` in a browser. Edit `AGENT_ID` and `TOKEN_URL` at the top of the script.
-
-### WebRTC Player (React)
-
-```bash
-cd examples/ui/webrtc-player
-npm install && npm run dev
-```
 
 ### Run an Agent
 

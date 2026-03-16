@@ -3,97 +3,245 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Pinecall WebRTC Demo — Pure HTML</title>
+  <title>Pinecall WebRTC</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
   <style>
     body { font-family: 'Inter', sans-serif; }
-    .scrollbar-thin { scrollbar-width: thin; scrollbar-color: rgba(50,50,80,0.4) transparent; }
-    .scrollbar-thin::-webkit-scrollbar { width: 5px; }
-    .scrollbar-thin::-webkit-scrollbar-thumb { background: rgba(50,50,80,0.4); border-radius: 3px; }
-    @keyframes fade-in { from { opacity:0; transform:translateY(4px) } to { opacity:1; transform:translateY(0) } }
-    .animate-fade-in { animation: fade-in 0.2s ease-out; }
+    .scrollbar-thin { scrollbar-width: thin; scrollbar-color: rgba(80,80,120,0.3) transparent; }
+    .scrollbar-thin::-webkit-scrollbar { width: 4px; }
+    .scrollbar-thin::-webkit-scrollbar-thumb { background: rgba(80,80,120,0.3); border-radius: 2px; }
+    @keyframes fade-up { from { opacity:0; transform:translateY(6px) } to { opacity:1; transform:translateY(0) } }
+    @keyframes pulse-ring { 0% { transform:scale(1); opacity:0.5 } 100% { transform:scale(2.2); opacity:0 } }
+    .animate-fade-up { animation: fade-up 0.25s ease-out; }
+    .glass { background: rgba(255,255,255,0.03); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.06); }
   </style>
 </head>
-<body class="bg-[#0a0a14] text-white min-h-screen flex items-center justify-center p-4">
+<body class="bg-[#0b0b18] text-white min-h-screen flex flex-col">
 
-  <div class="w-full max-w-3xl flex flex-col gap-4">
-    <!-- Header -->
-    <div class="flex items-center justify-between">
-      <div class="flex items-center gap-2">
-        <span class="text-lg">🌲</span>
-        <span class="font-semibold text-sm">Pinecall</span>
-        <span class="text-[10px] px-2 py-0.5 rounded-full bg-green-500/10 text-green-400 font-medium">WebRTC Demo</span>
-      </div>
-      <div class="flex items-center gap-2">
-        <span id="duration" class="text-xs font-mono text-gray-500 hidden">0:00</span>
-        <button id="eventsToggle" onclick="toggleEvents()"
-          class="text-xs px-3 py-1.5 rounded-lg bg-[#1a1a2e] border border-gray-800 text-gray-400 hover:text-white transition">
-          Events <span id="eventCount" class="text-gray-600">(0)</span>
-        </button>
-      </div>
+  <!-- Top bar -->
+  <header class="flex items-center justify-between px-8 py-5">
+    <div class="flex items-center gap-3">
+      <div class="w-2 h-2 rounded-full bg-emerald-400"></div>
+      <span class="text-sm text-gray-400 tracking-wide">Pinecall WebRTC</span>
     </div>
+    <div class="flex items-center gap-4">
+      <span id="duration" class="text-xs font-mono text-gray-500 hidden tabular-nums">0:00</span>
+      <button id="eventsToggle" onclick="toggleEvents()"
+        class="text-xs px-3 py-1.5 rounded-lg glass text-gray-400 hover:text-white transition cursor-pointer">
+        Events <span id="eventCount" class="text-gray-600">(0)</span>
+      </button>
+    </div>
+  </header>
 
-    <div class="flex gap-4" style="height: 480px">
-      <!-- Chat panel -->
-      <div class="flex-1 flex flex-col bg-[#12121e] rounded-2xl border border-gray-800/60 overflow-hidden">
-        <!-- Messages -->
-        <div id="chat" class="flex-1 overflow-y-auto p-4 space-y-3 scrollbar-thin">
-          <p class="text-gray-600 text-sm text-center mt-40">Press the button to start talking</p>
+  <div class="flex-1 flex overflow-hidden">
+    <!-- Main column -->
+    <div class="flex-1 flex flex-col px-8 pb-6">
+
+      <!-- Waveform -->
+      <div id="waveformContainer" class="mb-4 hidden">
+        <div class="glass rounded-xl px-5 py-3">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-[10px] uppercase tracking-widest text-gray-500">Audio</span>
+            <span id="waveLabel" class="text-[10px] tracking-wide text-gray-600 transition-colors">Idle</span>
+          </div>
+          <canvas id="waveCanvas" class="w-full rounded" style="height:44px"></canvas>
         </div>
+      </div>
 
-        <!-- Controls -->
-        <div class="flex items-center justify-center gap-3 py-4 border-t border-gray-800/40">
-          <button id="muteBtn" onclick="doMute()"
-            class="hidden w-11 h-11 rounded-full bg-[#1e1e2e] border border-gray-700 text-lg hover:border-gray-500 transition cursor-pointer">🎙️</button>
+      <!-- Chat -->
+      <div id="chat" class="flex-1 overflow-y-auto space-y-4 scrollbar-thin pr-2">
+        <div id="emptyState" class="flex flex-col items-center justify-center h-full gap-6">
+          <div class="w-16 h-16 rounded-2xl glass flex items-center justify-center">
+            <svg class="w-7 h-7 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" />
+            </svg>
+          </div>
+          <div class="text-center">
+            <p class="text-gray-400 text-sm">Press to start a conversation</p>
+            <p class="text-gray-600 text-xs mt-1">Agent: <span id="agentLabel" class="text-gray-500">minimal</span></p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Controls -->
+      <div class="flex items-center justify-center gap-4 pt-6">
+        <button id="muteBtn" onclick="doMute()"
+          class="hidden w-12 h-12 rounded-full glass text-lg hover:bg-white/5 transition cursor-pointer">🎙️</button>
+
+        <div class="relative">
           <button id="callBtn" onclick="toggleCall()"
-            class="w-14 h-14 rounded-full bg-gradient-to-br from-green-500 to-emerald-600 text-2xl shadow-lg shadow-green-500/25 hover:scale-105 active:scale-95 transition cursor-pointer">🎙️</button>
-          <button id="sendBtn" onclick="sendDC()"
-            class="hidden w-11 h-11 rounded-full bg-[#1e1e2e] border border-gray-700 text-sm hover:border-gray-500 transition cursor-pointer" title="Send data channel message">📤</button>
+            class="relative z-10 w-16 h-16 rounded-full bg-emerald-500 text-white text-xl shadow-lg shadow-emerald-500/20 hover:bg-emerald-400 hover:scale-105 active:scale-95 transition-all cursor-pointer flex items-center justify-center">
+            <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" />
+            </svg>
+          </button>
+          <div id="callRing" class="hidden absolute inset-0 rounded-full border-2 border-emerald-400" style="animation: pulse-ring 1.5s ease-out infinite"></div>
         </div>
-        <p id="status" class="text-center text-[10px] text-gray-600 pb-3">Ready</p>
-      </div>
 
-      <!-- Events panel (toggleable) -->
-      <div id="eventsPanel" class="hidden w-72 flex flex-col bg-[#12121e] rounded-2xl border border-gray-800/60 overflow-hidden">
-        <div class="flex items-center justify-between px-4 py-3 border-b border-gray-800/40">
-          <span class="text-[11px] font-medium uppercase tracking-wider text-gray-500">Data Channel Events</span>
-          <button onclick="clearEvents()" class="text-gray-600 hover:text-gray-400 text-xs cursor-pointer">Clear</button>
-        </div>
-        <div id="eventsList" class="flex-1 overflow-y-auto scrollbar-thin"></div>
+        <button id="sendBtn" onclick="sendDC()"
+          class="hidden w-12 h-12 rounded-full glass text-sm hover:bg-white/5 transition cursor-pointer" title="Send data channel message">📤</button>
       </div>
+      <p id="status" class="text-center text-[11px] text-gray-600 mt-3">Ready</p>
     </div>
+
+    <!-- Events panel -->
+    <aside id="eventsPanel" class="hidden w-80 border-l border-white/5 flex flex-col bg-[#0d0d1a]">
+      <div class="flex items-center justify-between px-5 py-4 border-b border-white/5">
+        <span class="text-[10px] uppercase tracking-widest text-gray-500">Data Channel Events</span>
+        <button onclick="clearEvents()" class="text-gray-600 hover:text-gray-400 text-xs cursor-pointer">Clear</button>
+      </div>
+      <div id="eventsList" class="flex-1 overflow-y-auto scrollbar-thin"></div>
+    </aside>
   </div>
 
-  <!-- Pinecall WebRTC SDK IIFE bundle -->
+  <!-- SDK -->
   <script src="../../dist/pinecall-webrtc.iife.global.js"></script>
   <script>
-    // ── Configuration ─────────────────────────────────────────────
+    // ── Config ─────────────────────────────────────────────────
     const AGENT_ID = 'minimal';
-    const TOKEN_URL = ''; // Your backend's token endpoint (empty = dev mode)
+    const TOKEN_URL = '';
 
     const { PinecallWebRTC } = Pinecall;
     let webrtc = null;
     let events = [];
     let durationTimer = null;
     let callStart = 0;
-    let botMessages = {}; // messageId → DOM element for word-by-word updates
+    let botMessages = {};
+    let audioCtx = null;
+    let waveAnimFrame = null;
 
-    // ── Chat ──────────────────────────────────────────────────────
+    agentLabel.textContent = AGENT_ID;
+
+    // ── Waveform ──────────────────────────────────────────────
+    let userAnalyser = null, agentAnalyser = null;
+    let userHistory = new Array(80).fill(0);
+    let agentHistory = new Array(80).fill(0);
+
+    function startWaveform(localStream, remoteStream) {
+      audioCtx = new AudioContext();
+      // User mic analyser
+      if (localStream) {
+        const src = audioCtx.createMediaStreamSource(localStream);
+        userAnalyser = audioCtx.createAnalyser();
+        userAnalyser.fftSize = 256;
+        src.connect(userAnalyser);
+      }
+      // Agent audio analyser
+      if (remoteStream) {
+        const src2 = audioCtx.createMediaStreamSource(remoteStream);
+        agentAnalyser = audioCtx.createAnalyser();
+        agentAnalyser.fftSize = 256;
+        src2.connect(agentAnalyser);
+      }
+      waveformContainer.classList.remove('hidden');
+      drawWave();
+    }
+
+    function addRemoteStream(remoteStream) {
+      if (!audioCtx || !remoteStream) return;
+      try {
+        const src = audioCtx.createMediaStreamSource(remoteStream);
+        agentAnalyser = audioCtx.createAnalyser();
+        agentAnalyser.fftSize = 256;
+        src.connect(agentAnalyser);
+      } catch(e) { /* ignore */ }
+    }
+
+    function stopWaveform() {
+      if (waveAnimFrame) cancelAnimationFrame(waveAnimFrame);
+      if (audioCtx) { audioCtx.close(); audioCtx = null; }
+      userAnalyser = null; agentAnalyser = null;
+      userHistory = new Array(80).fill(0);
+      agentHistory = new Array(80).fill(0);
+      waveformContainer.classList.add('hidden');
+    }
+
+    function getRms(analyser) {
+      if (!analyser) return 0;
+      const data = new Uint8Array(analyser.frequencyBinCount);
+      analyser.getByteTimeDomainData(data);
+      let sum = 0;
+      for (let i = 0; i < data.length; i++) { const v = (data[i] - 128) / 128; sum += v * v; }
+      return Math.sqrt(sum / data.length);
+    }
+
+    function drawWave() {
+      const canvas = waveCanvas;
+      const ctx = canvas.getContext('2d');
+      const dpr = devicePixelRatio || 1;
+      const w = canvas.clientWidth, h = canvas.clientHeight;
+      canvas.width = w * dpr; canvas.height = h * dpr;
+      ctx.scale(dpr, dpr);
+      ctx.clearRect(0, 0, w, h);
+
+      const userRms = getRms(userAnalyser);
+      const agentRms = getRms(agentAnalyser);
+
+      userHistory.push(Math.min(1, userRms * 5));
+      agentHistory.push(Math.min(1, agentRms * 5));
+      if (userHistory.length > 80) userHistory.shift();
+      if (agentHistory.length > 80) agentHistory.shift();
+
+      // Label
+      const userSpeaking = userRms > 0.02;
+      const agentSpeaking = agentRms > 0.01;
+      if (userSpeaking) { waveLabel.textContent = 'You'; waveLabel.style.color = '#4ade80'; }
+      else if (agentSpeaking) { waveLabel.textContent = 'Agent'; waveLabel.style.color = '#a78bfa'; }
+      else { waveLabel.textContent = 'Listening'; waveLabel.style.color = '#6b7280'; }
+
+      const mid = h / 2;
+      const barW = 2.5, gap = 1.5;
+      const total = Math.min(80, Math.floor(w / (barW + gap)));
+      const startX = (w - total * (barW + gap) + gap) / 2;
+
+      for (let i = 0; i < total; i++) {
+        const idx = 80 - total + i;
+        const uI = userHistory[idx] || 0;
+        const aI = agentHistory[idx] || 0;
+        const intensity = Math.max(uI, aI);
+        const isAgent = aI > uI;
+        const barH = Math.max(1, intensity * h * 0.4);
+
+        if (intensity > 0.01) {
+          const grad = ctx.createLinearGradient(0, mid - barH, 0, mid + barH);
+          if (isAgent) {
+            // Purple for agent
+            grad.addColorStop(0, 'rgba(167,139,250,0.05)');
+            grad.addColorStop(0.5, `rgba(167,139,250,${0.3 + intensity * 0.7})`);
+            grad.addColorStop(1, 'rgba(167,139,250,0.05)');
+          } else {
+            // Green for user
+            grad.addColorStop(0, 'rgba(74,222,128,0.05)');
+            grad.addColorStop(0.5, `rgba(74,222,128,${0.3 + intensity * 0.7})`);
+            grad.addColorStop(1, 'rgba(74,222,128,0.05)');
+          }
+          ctx.fillStyle = grad;
+        } else {
+          ctx.fillStyle = 'rgba(255,255,255,0.03)';
+        }
+        ctx.beginPath();
+        ctx.roundRect(startX + i * (barW + gap), mid - barH, barW, barH * 2, 1);
+        ctx.fill();
+      }
+      waveAnimFrame = requestAnimationFrame(drawWave);
+    }
+
+    // ── Chat ──────────────────────────────────────────────────
     function addMsg(role, text, opts = {}) {
-      const placeholder = chat.querySelector('p.text-gray-600');
-      if (placeholder) placeholder.remove();
+      const empty = document.getElementById('emptyState');
+      if (empty) empty.remove();
 
       const d = document.createElement('div');
-      d.className = `${role === 'user' ? 'text-right' : role === 'system' ? 'text-center' : 'text-left'} animate-fade-in`;
-      const b = document.createElement('span');
+      d.className = `${role === 'user' ? 'flex justify-end' : role === 'system' ? 'flex justify-center' : 'flex justify-start'} animate-fade-up`;
 
+      const b = document.createElement('div');
       if (role === 'system') {
-        b.className = 'inline-block bg-purple-500/10 border border-purple-500/20 text-purple-300 px-3 py-1.5 rounded-full text-xs';
+        b.className = 'px-4 py-2 rounded-full glass text-xs text-gray-400';
       } else if (role === 'user') {
-        b.className = `inline-block bg-green-900/40 border ${opts.interim ? 'border-dashed border-green-700/20 opacity-50' : 'border-green-700/30'} text-green-100 px-3 py-2 rounded-2xl text-sm max-w-[80%]`;
+        b.className = `max-w-[75%] px-4 py-3 rounded-2xl text-sm leading-relaxed ${opts.interim ? 'glass opacity-50' : 'bg-emerald-500/10 border border-emerald-500/15 text-emerald-100'}`;
       } else {
-        b.className = 'inline-block bg-[#1a1a2e] border border-gray-700/40 text-gray-200 px-3 py-2 rounded-2xl text-sm max-w-[80%]';
+        b.className = 'max-w-[75%] px-4 py-3 rounded-2xl glass text-sm text-gray-200 leading-relaxed';
       }
       b.textContent = text;
       if (opts.id) b.id = opts.id;
@@ -105,48 +253,40 @@
 
     function updateMsg(id, text, opts = {}) {
       const el = document.getElementById(id);
-      if (el) {
-        if (text) el.textContent = text;
-        if (opts.interrupted) el.classList.add('line-through', 'opacity-40');
-        if (opts.done) el.classList.remove('animate-pulse');
-      }
+      if (!el) return;
+      if (text) el.textContent = text;
+      if (opts.interrupted) { el.classList.add('opacity-30'); el.style.textDecoration = 'line-through'; }
+      if (opts.done) el.classList.remove('animate-pulse');
     }
 
-    // ── Events ────────────────────────────────────────────────────
+    // ── Events ────────────────────────────────────────────────
     function addEvent(evt) {
       events.push(evt);
       eventCount.textContent = `(${events.length})`;
       const el = document.createElement('div');
-      el.className = 'px-3 py-2 border-b border-gray-800/30 cursor-pointer hover:bg-white/[.03] transition text-[11px]';
-
-      const dot = evt.event.startsWith('user') ? '🟢' : evt.event.startsWith('bot') ? '🟣' : '🔵';
-      el.innerHTML = `<div class="flex items-center gap-1.5"><span class="text-[9px]">${dot}</span><span class="font-mono text-gray-300">${evt.event}</span></div>`;
+      el.className = 'px-5 py-3 border-b border-white/[.03] cursor-pointer hover:bg-white/[.02] transition';
+      const dot = evt.event?.startsWith('user') ? '#4ade80' : evt.event?.startsWith('bot') ? '#a78bfa' : '#60a5fa';
+      el.innerHTML = `<div class="flex items-center gap-2"><div class="w-1.5 h-1.5 rounded-full flex-shrink-0" style="background:${dot}"></div><span class="text-xs font-mono text-gray-400 truncate">${evt.event}</span></div>`;
       el.onclick = () => {
-        const existing = el.querySelector('pre');
-        if (existing) { existing.remove(); return; }
-        const pre = document.createElement('pre');
-        pre.className = 'mt-2 text-[10px] p-2 rounded-md bg-black/30 text-gray-400 overflow-auto max-h-32';
-        pre.style.whiteSpace = 'pre-wrap';
-        pre.style.wordBreak = 'break-all';
-        pre.textContent = JSON.stringify(evt, null, 2);
-        el.appendChild(pre);
+        const pre = el.querySelector('pre');
+        if (pre) { pre.remove(); return; }
+        const p = document.createElement('pre');
+        p.className = 'mt-2 text-[10px] p-3 rounded-lg bg-black/30 text-gray-500 overflow-auto max-h-40';
+        p.style.whiteSpace = 'pre-wrap'; p.style.wordBreak = 'break-all';
+        p.textContent = JSON.stringify(evt, null, 2);
+        el.appendChild(p);
       };
       eventsList.appendChild(el);
       eventsList.scrollTop = eventsList.scrollHeight;
     }
 
-    function clearEvents() {
-      events = [];
-      eventsList.innerHTML = '';
-      eventCount.textContent = '(0)';
-    }
-
+    function clearEvents() { events = []; eventsList.innerHTML = ''; eventCount.textContent = '(0)'; }
     function toggleEvents() {
       eventsPanel.classList.toggle('hidden');
       eventsPanel.classList.toggle('flex');
     }
 
-    // ── Duration ──────────────────────────────────────────────────
+    // ── Duration ──────────────────────────────────────────────
     function startDuration() {
       callStart = Date.now();
       duration.classList.remove('hidden');
@@ -155,171 +295,123 @@
         duration.textContent = `${Math.floor(s/60)}:${(s%60).toString().padStart(2,'0')}`;
       }, 1000);
     }
-    function stopDuration() {
-      if (durationTimer) { clearInterval(durationTimer); durationTimer = null; }
-    }
+    function stopDuration() { if (durationTimer) { clearInterval(durationTimer); durationTimer = null; } }
 
-    // ── Mute ──────────────────────────────────────────────────────
     function doMute() {
       if (!webrtc) return;
       webrtc.toggleMute();
       muteBtn.textContent = webrtc.isMuted ? '🔇' : '🎙️';
     }
 
-    // ── Send data channel ─────────────────────────────────────────
     function sendDC() {
       if (!webrtc) return;
-      const msg = prompt('JSON message to send via data channel\ne.g. {"action":"mute"}');
+      const msg = prompt('JSON to send via data channel');
       if (!msg) return;
-      try {
-        const parsed = JSON.parse(msg);
-        webrtc.send(parsed);
-        addEvent({ event: 'client.send', ...parsed, _direction: 'out' });
-      } catch {
-        alert('Invalid JSON');
-      }
+      try { webrtc.send(JSON.parse(msg)); addEvent({ event: 'client.send', ...JSON.parse(msg) }); }
+      catch { alert('Invalid JSON'); }
     }
 
-    // ── Call ───────────────────────────────────────────────────────
+    // ── Call ───────────────────────────────────────────────────
     async function toggleCall() {
       if (webrtc) {
-        webrtc.disconnect();
-        webrtc = null;
-        stopDuration();
-        callBtn.textContent = '🎙️';
-        callBtn.className = 'w-14 h-14 rounded-full bg-gradient-to-br from-green-500 to-emerald-600 text-2xl shadow-lg shadow-green-500/25 hover:scale-105 active:scale-95 transition cursor-pointer';
-        muteBtn.classList.add('hidden');
-        sendBtn.classList.add('hidden');
+        webrtc.disconnect(); webrtc = null;
+        stopDuration(); stopWaveform();
+        callBtn.innerHTML = '<svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" /></svg>';
+        callBtn.className = 'relative z-10 w-16 h-16 rounded-full bg-emerald-500 text-white text-xl shadow-lg shadow-emerald-500/20 hover:bg-emerald-400 hover:scale-105 active:scale-95 transition-all cursor-pointer flex items-center justify-center';
+        callRing.classList.add('hidden');
+        muteBtn.classList.add('hidden'); sendBtn.classList.add('hidden');
         status.textContent = 'Disconnected';
         return;
       }
 
       status.textContent = 'Connecting…';
+      callRing.classList.remove('hidden');
       botMessages = {};
 
       try {
         let opts = {};
-        if (TOKEN_URL) {
-          const res = await fetch(TOKEN_URL);
-          const data = await res.json();
-          opts.token = data.token;
-        }
+        if (TOKEN_URL) { const r = await fetch(TOKEN_URL); const d = await r.json(); opts.token = d.token; }
 
         webrtc = new PinecallWebRTC(AGENT_ID, opts);
 
-        // ── Connection events ────────────────────────────────────
         webrtc.on('connected', () => {
-          status.textContent = 'Connected — speak!';
-          callBtn.textContent = '✕';
-          callBtn.className = 'w-14 h-14 rounded-full bg-gradient-to-br from-red-500 to-red-700 text-2xl shadow-lg shadow-red-500/25 hover:scale-105 active:scale-95 transition cursor-pointer';
-          muteBtn.classList.remove('hidden');
-          sendBtn.classList.remove('hidden');
+          status.textContent = 'Connected';
+          callBtn.innerHTML = '<svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>';
+          callBtn.className = 'relative z-10 w-16 h-16 rounded-full bg-red-500 text-white text-xl shadow-lg shadow-red-500/20 hover:bg-red-400 hover:scale-105 active:scale-95 transition-all cursor-pointer flex items-center justify-center';
+          callRing.classList.add('hidden');
+          muteBtn.classList.remove('hidden'); sendBtn.classList.remove('hidden');
           chat.innerHTML = '';
-          addMsg('system', 'Connected — start talking!');
+          addMsg('system', 'Connected — start talking');
           startDuration();
+          if (webrtc.localStream) startWaveform(webrtc.localStream, webrtc.remoteStream);
+          // Remote stream may arrive after connect
+          if (!webrtc.remoteStream) {
+            const checkRemote = setInterval(() => {
+              if (!webrtc) { clearInterval(checkRemote); return; }
+              if (webrtc.remoteStream) { addRemoteStream(webrtc.remoteStream); clearInterval(checkRemote); }
+            }, 200);
+          }
         });
 
-        webrtc.on('disconnected', (d) => {
-          status.textContent = 'Disconnected';
-          stopDuration();
-          callBtn.textContent = '🎙️';
-          callBtn.className = 'w-14 h-14 rounded-full bg-gradient-to-br from-green-500 to-emerald-600 text-2xl shadow-lg shadow-green-500/25 hover:scale-105 active:scale-95 transition cursor-pointer';
-          muteBtn.classList.add('hidden');
-          sendBtn.classList.add('hidden');
-          webrtc = null;
-          addEvent({ event: 'disconnected', reason: d?.reason });
+        webrtc.on('disconnected', () => {
+          status.textContent = 'Disconnected'; stopDuration(); stopWaveform();
+          callBtn.innerHTML = '<svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" /></svg>';
+          callBtn.className = 'relative z-10 w-16 h-16 rounded-full bg-emerald-500 text-white text-xl shadow-lg shadow-emerald-500/20 hover:bg-emerald-400 hover:scale-105 active:scale-95 transition-all cursor-pointer flex items-center justify-center';
+          callRing.classList.add('hidden');
+          muteBtn.classList.add('hidden'); sendBtn.classList.add('hidden'); webrtc = null;
         });
 
-        webrtc.on('error', (e) => {
-          addEvent({ event: 'error', message: e?.message });
-        });
+        webrtc.on('session.started', (d) => { addMsg('system', 'Session started'); addEvent({ event: 'session.started', ...d }); });
 
-        // ── Session ──────────────────────────────────────────────
-        webrtc.on('session.started', (d) => {
-          addMsg('system', `Session ${d.session_id?.slice(0,8)}…`);
-          addEvent({ event: 'session.started', ...d });
-        });
-
-        webrtc.on('session.ended', (d) => {
-          addMsg('system', 'Session ended');
-          addEvent({ event: 'session.ended', ...d });
-        });
-
-        // ── User speech ──────────────────────────────────────────
         let interimEl = null;
         webrtc.on('user.speaking', (d) => {
-          if (!interimEl) {
-            interimEl = addMsg('user', d.text, { interim: true });
-          } else {
-            interimEl.textContent = d.text;
-          }
+          if (!interimEl) interimEl = addMsg('user', d.text, { interim: true });
+          else interimEl.textContent = d.text;
           addEvent({ event: 'user.speaking', text: d.text });
         });
 
         webrtc.on('user.message', (d) => {
-          if (interimEl) {
-            interimEl.textContent = d.text;
-            interimEl.classList.remove('border-dashed', 'opacity-50');
-            interimEl.classList.add('border-solid');
-            interimEl = null;
-          } else {
-            addMsg('user', d.text);
-          }
-          addEvent({ event: 'user.message', text: d.text, message_id: d.message_id });
+          if (interimEl) { interimEl.textContent = d.text; interimEl.className = 'max-w-[75%] px-4 py-3 rounded-2xl text-sm leading-relaxed bg-emerald-500/10 border border-emerald-500/15 text-emerald-100'; interimEl = null; }
+          else addMsg('user', d.text);
+          addEvent({ event: 'user.message', text: d.text });
         });
 
-        // ── Turn detection ───────────────────────────────────────
-        webrtc.on('turn.pause', (d) => addEvent({ event: 'turn.pause', ...d }));
-        webrtc.on('turn.end', (d) => addEvent({ event: 'turn.end', ...d }));
-
-        // ── Bot speech (word-by-word streaming) ──────────────────
         webrtc.on('bot.speaking', (d) => {
-          const msgId = `bot-${d.message_id}`;
-          const el = addMsg('bot', d.text || '…', { id: msgId });
+          const id = `bot-${d.message_id}`;
+          const el = addMsg('bot', d.text || '…', { id });
           el.classList.add('animate-pulse');
-          botMessages[d.message_id] = { words: [], el: msgId };
-          addEvent({ event: 'bot.speaking', message_id: d.message_id, text: d.text });
+          botMessages[d.message_id] = { words: [], el: id };
+          addEvent({ event: 'bot.speaking', message_id: d.message_id });
         });
 
         webrtc.on('bot.word', (d) => {
-          const entry = botMessages[d.message_id];
-          if (entry) {
-            entry.words[d.word_index ?? entry.words.length] = d.word;
-            updateMsg(entry.el, entry.words.filter(Boolean).join(' '));
-          }
-          // Don't log every word to events (too noisy)
+          const e = botMessages[d.message_id];
+          if (e) { e.words[d.word_index ?? e.words.length] = d.word; updateMsg(e.el, e.words.filter(Boolean).join(' ')); }
         });
 
         webrtc.on('bot.finished', (d) => {
-          const entry = botMessages[d.message_id];
-          if (entry) {
-            if (d.text) updateMsg(entry.el, d.text);
-            updateMsg(entry.el, null, { done: true });
-          }
-          addEvent({ event: 'bot.finished', message_id: d.message_id, duration_ms: d.duration_ms });
+          const e = botMessages[d.message_id];
+          if (e) { if (d.text) updateMsg(e.el, d.text); updateMsg(e.el, null, { done: true }); }
+          addEvent({ event: 'bot.finished', message_id: d.message_id });
         });
 
         webrtc.on('bot.interrupted', (d) => {
-          const entry = botMessages[d.message_id];
-          if (entry) updateMsg(entry.el, null, { interrupted: true, done: true });
+          const e = botMessages[d.message_id];
+          if (e) updateMsg(e.el, null, { interrupted: true, done: true });
           addEvent({ event: 'bot.interrupted', message_id: d.message_id });
         });
 
-        // ── Config ───────────────────────────────────────────────
-        webrtc.on('config.updated', (d) => addEvent({ event: 'config.updated', ...d }));
-
-        // ── Audio metrics ────────────────────────────────────────
         webrtc.on('audio.metrics', (d) => {
-          // Update status bar with who's talking
-          if (d.is_speech) {
-            status.textContent = d.source === 'user' ? '🟢 You are speaking' : '🟣 Agent is speaking';
-          }
+          if (d.is_speech) status.textContent = d.source === 'user' ? 'You are speaking' : 'Agent is speaking';
         });
+
+        webrtc.on('turn.end', (d) => addEvent({ event: 'turn.end', ...d }));
+        webrtc.on('config.updated', (d) => addEvent({ event: 'config.updated', ...d }));
 
         await webrtc.connect();
       } catch (e) {
         status.textContent = 'Error: ' + e.message;
-        webrtc = null;
+        callRing.classList.add('hidden'); webrtc = null;
       }
     }
   </script>

@@ -72,6 +72,7 @@ export class PinecallWebRTC {
 
     private _pc: RTCPeerConnection | null = null;
     private _localStream: MediaStream | null = null;
+    private _remoteStream: MediaStream | null = null;
     private _remoteAudio: HTMLAudioElement | null = null;
     private _dataChannel: RTCDataChannel | null = null;
     private _pcId: string | null = null;
@@ -138,6 +139,7 @@ export class PinecallWebRTC {
 
             // 5. Handle remote audio (TTS from server)
             this._pc.ontrack = (e) => {
+                this._remoteStream = e.streams[0];
                 if (!this._remoteAudio) {
                     this._remoteAudio = new Audio();
                     this._remoteAudio.autoplay = true;
@@ -238,6 +240,7 @@ export class PinecallWebRTC {
             this._remoteAudio.srcObject = null;
             this._remoteAudio = null;
         }
+        this._remoteStream = null;
         this._dataChannel = null;
         this._pcId = null;
         this._sessionId = null;
@@ -289,6 +292,8 @@ export class PinecallWebRTC {
     get pcId(): string | null { return this._pcId; }
     /** The local MediaStream (mic). Useful for audio visualization. */
     get localStream(): MediaStream | null { return this._localStream; }
+    /** The remote MediaStream (agent TTS). Useful for audio visualization. */
+    get remoteStream(): MediaStream | null { return this._remoteStream; }
 
     // ── Events ───────────────────────────────────────────────────────────
 

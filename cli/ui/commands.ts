@@ -528,229 +528,209 @@ function generateWebRTCPage(serverUrl: string, appId: string): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Pinecall WebRTC — ${appId}</title>
+<script src="https://cdn.tailwindcss.com"><\/script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
 <style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body {
-    font-family: 'Inter', -apple-system, sans-serif;
-    background: #0d0118;
-    color: #eef0fa;
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 2rem;
-  }
-  h1 { font-size: 1.4rem; font-weight: 600; margin-bottom: 0.5rem; color: #c084fc; }
-  .subtitle { font-size: 0.85rem; color: #7c6f99; margin-bottom: 2rem; }
-  .card {
-    background: rgba(30, 15, 50, 0.8);
-    border: 1px solid rgba(120, 80, 180, 0.2);
-    border-radius: 16px;
-    padding: 2rem;
-    width: 100%;
-    max-width: 520px;
-    backdrop-filter: blur(20px);
-  }
-  .status { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1.5rem; font-size: 0.9rem; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; }
-  .dot.idle { background: #555; }
-  .dot.connecting { background: #ffc43c; animation: pulse 1s infinite; }
-  .dot.connected { background: #5cf598; }
-  .dot.error { background: #ff6b6b; }
-  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
-  button {
-    padding: 0.75rem 1.5rem;
-    border: none;
-    border-radius: 12px;
-    font-size: 0.9rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
-    width: 100%;
-  }
-  button:hover { transform: scale(1.02); }
-  button:active { transform: scale(0.98); }
-  .btn-call { background: linear-gradient(135deg, #5cf598, #22c55e); color: #0d0118; }
-  .btn-end { background: linear-gradient(135deg, #ff6b6b, #dc2626); color: white; }
-  .btn-call:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
-  .transcript {
-    margin-top: 1.5rem;
-    max-height: 300px;
-    overflow-y: auto;
-    padding: 1rem;
-    background: rgba(0, 0, 0, 0.3);
-    border-radius: 8px;
-    font-size: 0.85rem;
-    line-height: 1.5;
-  }
-  .msg { padding: 0.3rem 0; }
-  .msg.user { color: #a78bfa; }
-  .msg.bot { color: #5cf598; }
-  .msg.system { color: #7c6f99; font-style: italic; }
-  .msg .label { font-weight: 600; margin-right: 0.3rem; }
-  .timer { font-family: 'SF Mono', monospace; color: #7c6f99; font-size: 0.8rem; }
+  body { font-family: 'Inter', sans-serif; }
+  .scrollbar-thin { scrollbar-width: thin; scrollbar-color: rgba(80,80,120,0.3) transparent; }
+  .scrollbar-thin::-webkit-scrollbar { width: 4px; }
+  .scrollbar-thin::-webkit-scrollbar-thumb { background: rgba(80,80,120,0.3); border-radius: 2px; }
+  @keyframes fade-up { from { opacity:0; transform:translateY(6px) } to { opacity:1; transform:translateY(0) } }
+  @keyframes pulse-ring { 0% { transform:scale(1); opacity:0.5 } 100% { transform:scale(2.2); opacity:0 } }
+  .animate-fade-up { animation: fade-up 0.25s ease-out; }
+  .glass { background: rgba(255,255,255,0.03); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.06); }
 </style>
 </head>
-<body>
-<h1>🎙️ Pinecall WebRTC</h1>
-<p class="subtitle">${appId} — ${serverUrl}</p>
-<div class="card">
-  <div class="status">
-    <div class="dot" id="dot"></div>
-    <span id="statusText">Ready</span>
-    <span class="timer" id="timer" style="margin-left:auto"></span>
+<body class="bg-[#0b0b18] text-white min-h-screen flex flex-col">
+  <header class="flex items-center justify-between px-8 py-5">
+    <div class="flex items-center gap-3">
+      <div class="w-2 h-2 rounded-full bg-emerald-400"></div>
+      <span class="text-sm text-gray-400 tracking-wide">Pinecall WebRTC</span>
+    </div>
+    <div class="flex items-center gap-4">
+      <span id="duration" class="text-xs font-mono text-gray-500 hidden tabular-nums">0:00</span>
+      <button id="eventsToggle" onclick="toggleEvents()"
+        class="text-xs px-3 py-1.5 rounded-lg glass text-gray-400 hover:text-white transition cursor-pointer">
+        Events <span id="eventCount" class="text-gray-600">(0)</span>
+      </button>
+    </div>
+  </header>
+  <div class="flex-1 flex overflow-hidden">
+    <div class="flex-1 flex flex-col px-8 pb-6">
+      <div id="waveformContainer" class="mb-4 hidden">
+        <div class="glass rounded-xl px-5 py-3">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-[10px] uppercase tracking-widest text-gray-500">Audio</span>
+            <span id="waveLabel" class="text-[10px] tracking-wide text-gray-600 transition-colors">Idle</span>
+          </div>
+          <canvas id="waveCanvas" class="w-full rounded" style="height:44px"></canvas>
+        </div>
+      </div>
+      <div id="chat" class="flex-1 overflow-y-auto space-y-4 scrollbar-thin pr-2">
+        <div id="emptyState" class="flex flex-col items-center justify-center h-full gap-6">
+          <div class="w-16 h-16 rounded-2xl glass flex items-center justify-center">
+            <svg class="w-7 h-7 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" />
+            </svg>
+          </div>
+          <div class="text-center">
+            <p class="text-gray-400 text-sm">Press to start a conversation</p>
+            <p class="text-gray-600 text-xs mt-1">Agent: <span class="text-gray-500">${appId}</span></p>
+          </div>
+        </div>
+      </div>
+      <div class="flex items-center justify-center gap-4 pt-6">
+        <button id="muteBtn" onclick="doMute()" class="hidden w-12 h-12 rounded-full glass text-lg hover:bg-white/5 transition cursor-pointer">🎙️</button>
+        <div class="relative">
+          <button id="callBtn" onclick="toggleCall()"
+            class="relative z-10 w-16 h-16 rounded-full bg-emerald-500 text-white text-xl shadow-lg shadow-emerald-500/20 hover:bg-emerald-400 hover:scale-105 active:scale-95 transition-all cursor-pointer flex items-center justify-center">
+            <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" />
+            </svg>
+          </button>
+          <div id="callRing" class="hidden absolute inset-0 rounded-full border-2 border-emerald-400" style="animation: pulse-ring 1.5s ease-out infinite"></div>
+        </div>
+      </div>
+      <p id="status" class="text-center text-[11px] text-gray-600 mt-3">Ready</p>
+    </div>
+    <aside id="eventsPanel" class="hidden w-80 border-l border-white/5 flex flex-col bg-[#0d0d1a]">
+      <div class="flex items-center justify-between px-5 py-4 border-b border-white/5">
+        <span class="text-[10px] uppercase tracking-widest text-gray-500">Data Channel Events</span>
+        <button onclick="clearEvents()" class="text-gray-600 hover:text-gray-400 text-xs cursor-pointer">Clear</button>
+      </div>
+      <div id="eventsList" class="flex-1 overflow-y-auto scrollbar-thin"></div>
+    </aside>
   </div>
-  <button id="callBtn" class="btn-call" onclick="toggleCall()">Start Call</button>
-  <div class="transcript" id="transcript"></div>
-</div>
-<script>
-const SERVER = "${serverUrl}";
-const APP_ID = "${appId}";
-let pc = null, localStream = null, remoteAudio = null, connected = false;
-let timerInterval = null, startTime = 0;
 
-function $(id) { return document.getElementById(id); }
-function setStatus(state, text) {
-  $("dot").className = "dot " + state;
-  $("statusText").textContent = text;
+<script src="http://localhost:4100/pinecall-webrtc.js"><\/script>
+<script>
+const SERVER_URL = "${serverUrl}";
+const AGENT_ID = "${appId}";
+const { PinecallWebRTC } = Pinecall;
+let webrtc = null, events = [], durationTimer = null, callStart = 0, botMessages = {};
+let audioCtx = null, waveAnimFrame = null;
+let userAnalyser = null, agentAnalyser = null;
+let userHistory = new Array(80).fill(0), agentHistory = new Array(80).fill(0);
+
+const micSVG = '<svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" /></svg>';
+const xSVG = '<svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>';
+const greenBtn = 'relative z-10 w-16 h-16 rounded-full bg-emerald-500 text-white text-xl shadow-lg shadow-emerald-500/20 hover:bg-emerald-400 hover:scale-105 active:scale-95 transition-all cursor-pointer flex items-center justify-center';
+const redBtn = 'relative z-10 w-16 h-16 rounded-full bg-red-500 text-white text-xl shadow-lg shadow-red-500/20 hover:bg-red-400 hover:scale-105 active:scale-95 transition-all cursor-pointer flex items-center justify-center';
+
+function startWaveform(local, remote) {
+  audioCtx = new AudioContext();
+  if (local) { const s = audioCtx.createMediaStreamSource(local); userAnalyser = audioCtx.createAnalyser(); userAnalyser.fftSize=256; s.connect(userAnalyser); }
+  if (remote) { const s = audioCtx.createMediaStreamSource(remote); agentAnalyser = audioCtx.createAnalyser(); agentAnalyser.fftSize=256; s.connect(agentAnalyser); }
+  waveformContainer.classList.remove('hidden');
+  drawWave();
 }
-function addMsg(role, text) {
-  const d = document.createElement("div");
-  d.className = "msg " + role;
-  d.innerHTML = '<span class="label">' + (role === "user" ? "You:" : role === "bot" ? "Bot:" : "•") + "</span>" + text;
-  $("transcript").appendChild(d);
-  $("transcript").scrollTop = $("transcript").scrollHeight;
+function addRemoteStream(rs) {
+  if (!audioCtx || !rs) return;
+  try { const s = audioCtx.createMediaStreamSource(rs); agentAnalyser = audioCtx.createAnalyser(); agentAnalyser.fftSize=256; s.connect(agentAnalyser); } catch {}
 }
-function startTimer() {
-  startTime = Date.now();
-  timerInterval = setInterval(() => {
-    const s = Math.floor((Date.now() - startTime) / 1000);
-    $("timer").textContent = Math.floor(s/60).toString().padStart(2,"0") + ":" + (s%60).toString().padStart(2,"0");
-  }, 1000);
+function stopWaveform() {
+  if (waveAnimFrame) cancelAnimationFrame(waveAnimFrame);
+  if (audioCtx) { audioCtx.close(); audioCtx = null; }
+  userAnalyser = agentAnalyser = null;
+  userHistory = new Array(80).fill(0); agentHistory = new Array(80).fill(0);
+  waveformContainer.classList.add('hidden');
 }
-function stopTimer() { clearInterval(timerInterval); $("timer").textContent = ""; }
+function getRms(a) { if (!a) return 0; const d = new Uint8Array(a.frequencyBinCount); a.getByteTimeDomainData(d); let s=0; for (let i=0;i<d.length;i++){const v=(d[i]-128)/128;s+=v*v;} return Math.sqrt(s/d.length); }
+function drawWave() {
+  const c = waveCanvas, ctx = c.getContext('2d'), dpr = devicePixelRatio||1, w = c.clientWidth, h = c.clientHeight;
+  c.width=w*dpr; c.height=h*dpr; ctx.scale(dpr,dpr); ctx.clearRect(0,0,w,h);
+  const uR=getRms(userAnalyser), aR=getRms(agentAnalyser);
+  userHistory.push(Math.min(1,uR*5)); agentHistory.push(Math.min(1,aR*5));
+  if(userHistory.length>80) userHistory.shift(); if(agentHistory.length>80) agentHistory.shift();
+  if(uR>0.02){waveLabel.textContent='You';waveLabel.style.color='#4ade80';}
+  else if(aR>0.01){waveLabel.textContent='Agent';waveLabel.style.color='#a78bfa';}
+  else{waveLabel.textContent='Listening';waveLabel.style.color='#6b7280';}
+  const mid=h/2,bW=2.5,gap=1.5,total=Math.min(80,Math.floor(w/(bW+gap))),sx=(w-total*(bW+gap)+gap)/2;
+  for(let i=0;i<total;i++){
+    const idx=80-total+i, uI=userHistory[idx]||0, aI=agentHistory[idx]||0, intensity=Math.max(uI,aI), isA=aI>uI;
+    const bH=Math.max(1,intensity*h*0.4);
+    if(intensity>0.01){const g=ctx.createLinearGradient(0,mid-bH,0,mid+bH);
+      if(isA){g.addColorStop(0,'rgba(167,139,250,0.05)');g.addColorStop(0.5,'rgba(167,139,250,'+(0.3+intensity*0.7)+')');g.addColorStop(1,'rgba(167,139,250,0.05)');}
+      else{g.addColorStop(0,'rgba(74,222,128,0.05)');g.addColorStop(0.5,'rgba(74,222,128,'+(0.3+intensity*0.7)+')');g.addColorStop(1,'rgba(74,222,128,0.05)');}
+      ctx.fillStyle=g;
+    }else{ctx.fillStyle='rgba(255,255,255,0.03)';}
+    ctx.beginPath();ctx.roundRect(sx+i*(bW+gap),mid-bH,bW,bH*2,1);ctx.fill();
+  }
+  waveAnimFrame = requestAnimationFrame(drawWave);
+}
+
+function addMsg(role, text, opts={}) {
+  const e = document.getElementById('emptyState'); if(e) e.remove();
+  const d = document.createElement('div');
+  d.className = (role==='user'?'flex justify-end':role==='system'?'flex justify-center':'flex justify-start')+' animate-fade-up';
+  const b = document.createElement('div');
+  if(role==='system') b.className='px-4 py-2 rounded-full glass text-xs text-gray-400';
+  else if(role==='user') b.className='max-w-[75%] px-4 py-3 rounded-2xl text-sm leading-relaxed '+(opts.interim?'glass opacity-50':'bg-emerald-500/10 border border-emerald-500/15 text-emerald-100');
+  else b.className='max-w-[75%] px-4 py-3 rounded-2xl glass text-sm text-gray-200 leading-relaxed';
+  b.textContent=text; if(opts.id) b.id=opts.id;
+  d.appendChild(b); chat.appendChild(d); chat.scrollTop=chat.scrollHeight; return b;
+}
+function updateMsg(id, text, opts={}) {
+  const el = document.getElementById(id); if(!el) return;
+  if(text) el.textContent=text;
+  if(opts.interrupted){el.classList.add('opacity-30');el.style.textDecoration='line-through';}
+  if(opts.done) el.classList.remove('animate-pulse');
+}
+
+function addEvent(evt) {
+  events.push(evt); eventCount.textContent='('+events.length+')';
+  const el = document.createElement('div');
+  el.className='px-5 py-3 border-b border-white/[.03] cursor-pointer hover:bg-white/[.02] transition';
+  const dot = evt.event?.startsWith('user')?'#4ade80':evt.event?.startsWith('bot')?'#a78bfa':'#60a5fa';
+  el.innerHTML='<div class="flex items-center gap-2"><div class="w-1.5 h-1.5 rounded-full flex-shrink-0" style="background:'+dot+'"></div><span class="text-xs font-mono text-gray-400 truncate">'+evt.event+'</span></div>';
+  el.onclick=()=>{const p=el.querySelector('pre');if(p){p.remove();return;}const pr=document.createElement('pre');pr.className='mt-2 text-[10px] p-3 rounded-lg bg-black/30 text-gray-500 overflow-auto max-h-40';pr.style.whiteSpace='pre-wrap';pr.style.wordBreak='break-all';pr.textContent=JSON.stringify(evt,null,2);el.appendChild(pr);};
+  eventsList.appendChild(el); eventsList.scrollTop=eventsList.scrollHeight;
+}
+function clearEvents(){events=[];eventsList.innerHTML='';eventCount.textContent='(0)';}
+function toggleEvents(){eventsPanel.classList.toggle('hidden');eventsPanel.classList.toggle('flex');}
+
+function startDuration(){callStart=Date.now();duration.classList.remove('hidden');durationTimer=setInterval(()=>{const s=Math.floor((Date.now()-callStart)/1000);duration.textContent=Math.floor(s/60)+':'+(s%60).toString().padStart(2,'0');},1000);}
+function stopDuration(){if(durationTimer){clearInterval(durationTimer);durationTimer=null;}}
+function doMute(){if(!webrtc)return;webrtc.toggleMute();muteBtn.textContent=webrtc.isMuted?'🔇':'🎙️';}
 
 async function toggleCall() {
-  if (connected) { disconnect(); return; }
+  if (webrtc) {
+    webrtc.disconnect(); webrtc=null; stopDuration(); stopWaveform();
+    callBtn.innerHTML=micSVG; callBtn.className=greenBtn; callRing.classList.add('hidden');
+    muteBtn.classList.add('hidden'); status.textContent='Disconnected'; return;
+  }
+  status.textContent='Connecting…'; callRing.classList.remove('hidden'); botMessages={};
   try {
-    setStatus("connecting", "Connecting…");
-    $("callBtn").disabled = true;
-
-    // ICE servers
-    let iceServers = [{ urls: "stun:stun.l.google.com:19302" }];
-    try { const r = await fetch(SERVER + "/webrtc/ice-servers"); if (r.ok) { const d = await r.json(); iceServers = d.iceServers || d.ice_servers || iceServers; } } catch {}
-
-    // Mic
-    localStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false });
-
-    // Peer connection
-    pc = new RTCPeerConnection({ iceServers });
-    localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
-
-    // Remote audio
-    pc.ontrack = e => {
-      if (!remoteAudio) { remoteAudio = new Audio(); remoteAudio.autoplay = true; }
-      remoteAudio.srcObject = e.streams[0];
-    };
-
-    // Data channel
-    pc.ondatachannel = e => {
-      const dc = e.channel;
-      dc.onmessage = msg => {
-        try {
-          const data = JSON.parse(msg.data);
-          switch (data.event) {
-            case "session.started": addMsg("system", "Session started"); break;
-            case "user.speaking": if (data.text) updateUser(data.text, true); break;
-            case "user.message": if (data.text) updateUser(data.text, false); break;
-            case "bot.speaking": if (data.text) addMsg("bot", data.text); break;
-            case "bot.word": updateBot(data.message_id, data.word, data.word_index); break;
-            case "bot.finished": break;
-            case "bot.interrupted": addMsg("system", "Bot interrupted"); break;
-            case "turn.end": break;
-          }
-        } catch {}
-      };
-      // Ping
-      setInterval(() => { if (dc.readyState === "open") dc.send("ping"); }, 1000);
-    };
-
-    // Connection state
-    pc.onconnectionstatechange = () => {
-      if (pc.connectionState === "connected") {
-        connected = true;
-        setStatus("connected", "Connected");
-        $("callBtn").disabled = false;
-        $("callBtn").textContent = "End Call";
-        $("callBtn").className = "btn-end";
-        startTimer();
-        addMsg("system", "Connected — start talking!");
-      } else if (pc.connectionState === "disconnected" || pc.connectionState === "failed") {
-        disconnect();
-      }
-    };
-
-    // Offer
-    const offer = await pc.createOffer({ offerToReceiveAudio: true });
-    await pc.setLocalDescription(offer);
-    await new Promise(r => { if (pc.iceGatheringState === "complete") r(); else { const t = setTimeout(r, 2000); pc.onicegatheringstatechange = () => { if (pc.iceGatheringState === "complete") { clearTimeout(t); r(); } }; } });
-
-    const res = await fetch(SERVER + "/webrtc/offer?app_id=" + encodeURIComponent(APP_ID), {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sdp: pc.localDescription.sdp, type: pc.localDescription.type }),
+    webrtc = new PinecallWebRTC(AGENT_ID, { server: SERVER_URL });
+    webrtc.on('connected', () => {
+      status.textContent='Connected'; callBtn.innerHTML=xSVG; callBtn.className=redBtn;
+      callRing.classList.add('hidden'); muteBtn.classList.remove('hidden');
+      chat.innerHTML=''; addMsg('system','Connected — start talking'); startDuration();
+      if(webrtc.localStream) startWaveform(webrtc.localStream, webrtc.remoteStream);
+      if(!webrtc.remoteStream){const ck=setInterval(()=>{if(!webrtc){clearInterval(ck);return;}if(webrtc.remoteStream){addRemoteStream(webrtc.remoteStream);clearInterval(ck);}},200);}
     });
-    if (!res.ok) { const e = await res.json(); throw new Error(e.detail || "Failed"); }
-    const answer = await res.json();
-    await pc.setRemoteDescription({ type: answer.type, sdp: answer.sdp });
-  } catch (err) {
-    setStatus("error", "Error: " + err.message);
-    $("callBtn").disabled = false;
-    disconnect();
-  }
+    webrtc.on('disconnected', () => {
+      status.textContent='Disconnected'; stopDuration(); stopWaveform();
+      callBtn.innerHTML=micSVG; callBtn.className=greenBtn; callRing.classList.add('hidden');
+      muteBtn.classList.add('hidden'); webrtc=null;
+    });
+    webrtc.on('session.started',(d)=>{addMsg('system','Session started');addEvent({event:'session.started',...d});});
+    let interimEl = null;
+    webrtc.on('user.speaking',(d)=>{if(!interimEl)interimEl=addMsg('user',d.text,{interim:true});else interimEl.textContent=d.text;addEvent({event:'user.speaking',text:d.text});});
+    webrtc.on('user.message',(d)=>{if(interimEl){interimEl.textContent=d.text;interimEl.className='max-w-[75%] px-4 py-3 rounded-2xl text-sm leading-relaxed bg-emerald-500/10 border border-emerald-500/15 text-emerald-100';interimEl=null;}else addMsg('user',d.text);addEvent({event:'user.message',text:d.text});});
+    webrtc.on('bot.speaking',(d)=>{const id='bot-'+d.message_id;const el=addMsg('bot',d.text||'…',{id});el.classList.add('animate-pulse');botMessages[d.message_id]={words:[],el:id};addEvent({event:'bot.speaking',message_id:d.message_id});});
+    webrtc.on('bot.word',(d)=>{const e=botMessages[d.message_id];if(e){e.words[d.word_index??e.words.length]=d.word;updateMsg(e.el,e.words.filter(Boolean).join(' '));}});
+    webrtc.on('bot.finished',(d)=>{const e=botMessages[d.message_id];if(e){if(d.text)updateMsg(e.el,d.text);updateMsg(e.el,null,{done:true});}addEvent({event:'bot.finished',message_id:d.message_id});});
+    webrtc.on('bot.interrupted',(d)=>{const e=botMessages[d.message_id];if(e)updateMsg(e.el,null,{interrupted:true,done:true});addEvent({event:'bot.interrupted',message_id:d.message_id});});
+    webrtc.on('turn.end',(d)=>addEvent({event:'turn.end',...d}));
+    await webrtc.connect();
+  } catch(e) { status.textContent='Error: '+e.message; callRing.classList.add('hidden'); webrtc=null; }
 }
-
-function disconnect() {
-  if (pc) { pc.close(); pc = null; }
-  if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
-  if (remoteAudio) { remoteAudio.pause(); remoteAudio.srcObject = null; remoteAudio = null; }
-  connected = false;
-  setStatus("idle", "Disconnected");
-  stopTimer();
-  $("callBtn").textContent = "Start Call";
-  $("callBtn").className = "btn-call";
-  $("callBtn").disabled = false;
-}
-
-// Live transcript helpers
-let lastUserEl = null;
-function updateUser(text, interim) {
-  if (interim && lastUserEl) { lastUserEl.innerHTML = '<span class="label">You:</span>' + text; return; }
-  lastUserEl = document.createElement("div");
-  lastUserEl.className = "msg user";
-  lastUserEl.innerHTML = '<span class="label">You:</span>' + text;
-  $("transcript").appendChild(lastUserEl);
-  if (!interim) lastUserEl = null;
-  $("transcript").scrollTop = $("transcript").scrollHeight;
-}
-
-const botWords = {};
-function updateBot(msgId, word, idx) {
-  if (!botWords[msgId]) { botWords[msgId] = { el: null, words: [] }; }
-  const b = botWords[msgId];
-  if (!b.el) {
-    b.el = document.createElement("div");
-    b.el.className = "msg bot";
-    b.el.innerHTML = '<span class="label">Bot:</span>';
-    $("transcript").appendChild(b.el);
-  }
-  b.words[idx] = word;
-  b.el.innerHTML = '<span class="label">Bot:</span>' + b.words.filter(Boolean).join(" ");
-  $("transcript").scrollTop = $("transcript").scrollHeight;
-}
-</script>
+<\/script>
 </body>
 </html>`;
 }
+
 
 const commands: Record<string, CommandDef> = {
     "/help":    { description: "Show available commands", handler: handleHelp },
