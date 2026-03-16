@@ -16,7 +16,7 @@ class CustomLLM extends Agent {
     greeting: "Hey! I'm a custom agent. Ask me anything!",
   });
 
-  instructions = "You are a helpful voice assistant.";
+  prompt = "You are a helpful voice assistant.";
 
   async onTurn(turn, call, history) {
     const reply = `You said: "${turn.text}"`;

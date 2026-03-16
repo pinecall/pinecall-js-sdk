@@ -11,7 +11,7 @@
  * class Receptionist extends GPTAgent {
  *   model = "pinecall:gpt-4.1-nano";
  *   phone = new Phone("+13186330963");
- *   instructions = "You are a helpful receptionist.";
+ *   prompt = "You are a helpful receptionist.";
  *
  *   async bookTable({ date, guests }) {
  *     return { confirmed: true, date, guests };

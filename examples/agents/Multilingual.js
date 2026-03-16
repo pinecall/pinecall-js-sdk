@@ -64,7 +64,7 @@ class MultilingualAgent extends GPTAgent {
     new SpanishPhone(), 
     new WebRTC() 
   ];
-  instructions = "You are a friendly, conversational voice assistant. Respond naturally in 2-3 sentences. Be warm and professional.";
+  prompt = "You are a friendly, conversational voice assistant. Respond naturally in 2-3 sentences. Be warm and professional.";
 }
 
 export default MultilingualAgent;

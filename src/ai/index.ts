@@ -19,7 +19,7 @@
  * class MyAgent extends GPTAgent {
  *   model = "gpt-4.1-nano";
  *   phone = new MyPhone();
- *   instructions = "You are helpful.";
+ *   prompt = "You are helpful.";
  * }
  *
  * export default MyAgent;

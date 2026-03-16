@@ -42,7 +42,7 @@ class Receptionist extends GPTAgent {
         turnDetection: "smart_turn",
     });
 
-    instructions = `You are the receptionist at "La Piña Dorada", a Latin American restaurant in Madrid.
+    prompt = `You are the receptionist at "La Piña Dorada", a Latin American restaurant in Madrid.
 
 Your responsibilities:
 - Book reservations using bookReservation (always ask for name, date, time, and number of guests)
