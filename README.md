@@ -38,6 +38,15 @@ npm install @pinecall/sdk
   - [Authentication](#authentication)
   - [Dashboard UI](#dashboard-ui)
 - [WebRTC Browser Client (`@pinecall/sdk/webrtc`)](#webrtc-browser-client)
+  - [Quick Example](#quick-example-1)
+  - [Minimal HTML Example](#minimal-html-example)
+  - [Constructor](#constructor-1)
+  - [WebRTCOptions](#webrtcoptions)
+  - [WebRTC Token Authentication](#webrtc-token-authentication)
+  - [Methods](#methods-1)
+  - [Properties](#properties-1)
+  - [Events](#events-1)
+  - [Data Channel Commands](#data-channel-commands)
 - [Runtime Configuration](#runtime-configuration)
 - [Configuration Reference](#configuration-reference)
   - [Agent Config](#agent-config)
@@ -221,6 +230,13 @@ const phones = await Pinecall.fetchPhones({ apiKey: "pk_..." });
 
 // Instance — fetch phones using the client's apiKey
 const phones = await pc.fetchPhones();
+
+// Instance — get a WebRTC token for browser connections
+const { token, server } = await pc.getWebRTCToken("my-agent");
+
+// Standalone — get a WebRTC token without a Pinecall instance
+import { fetchWebRTCToken } from "@pinecall/sdk";
+const { token } = await fetchWebRTCToken({ apiKey: "pk_...", agentId: "my-agent" });
 ```
 
 ---
@@ -1107,20 +1123,26 @@ Or in `pinecall.config.json`:
 
 The `@pinecall/sdk/webrtc` package provides a standalone browser-side WebRTC client for voice calls. Use this when building custom UIs — no full SDK or WebSocket connection needed.
 
-The browser connects **directly to the Pinecall server** for WebRTC media. The SDK server (Node.js) only handles agent registration and provides the server URL via `/server-info`:
-
 ```
-SDK Server (Node.js :4100)
-  ├── Registers agents + config via WSS
-  ├── Serves Dashboard UI, REST API, WS events
-  └── GET /server-info → returns Pinecall server URL
-
-Browser (PinecallWebRTC)
-  └── WebRTC direct to Pinecall server → POST /webrtc/offer?app_id=xxx
-      ├── Audio in:  mic → STT/VAD (server-side)
-      ├── Audio out: TTS → speaker
-      └── Data channel: events (transcripts, bot.word, etc.)
+Browser                          SDK Event Server (:4100)         Pinecall Cloud
+  │                                   │                              │
+  │ GET /webrtc/token?agent_id=x      │                              │
+  │──────────────────────────────────>│                              │
+  │                                   │ POST /api/sdk/webrtc-token   │
+  │                                   │  X-API-Key: pk_xxx           │
+  │                                   │─────────────────────────────>│
+  │                                   │  { token: "wrt_..."}         │
+  │                                   │<─────────────────────────────│
+  │  { token, server }                │                              │
+  │<──────────────────────────────────│                              │
+  │                                                                  │
+  │ POST /webrtc/offer { sdp, token }                                │
+  │─────────────────────────────────────────────────────────────────>│
+  │                          WebRTC connected                        │
+  │<─────────────────────────────────────────────────────────────────│
 ```
+
+**Your API key never touches the browser.** The event server proxies the token request.
 
 ```typescript
 import { PinecallWebRTC } from "@pinecall/sdk/webrtc";
@@ -1134,76 +1156,90 @@ const webrtc = new PinecallWebRTC("my-agent");
 webrtc.on("connected", () => console.log("Connected!"));
 webrtc.on("bot.word", (data) => console.log(data.word));
 webrtc.on("user.message", (data) => console.log("User:", data.text));
-webrtc.on("turn.end", (data) => console.log("Turn ended"));
 
 await webrtc.connect();
 
 // Mute/unmute (local track + server-side STT)
-webrtc.mute();
-webrtc.unmute();
 webrtc.toggleMute();
 
 // Disconnect
 webrtc.disconnect();
 ```
 
+On `connect()`, the SDK auto-discovers the event server (same-origin or `localhost:4100`), fetches a token from `/webrtc/token`, and connects to the voice server. Zero configuration needed.
+
+### Minimal HTML Example
+
+A complete working voice app in one file:
+
+```html
+<button id="btn" onclick="toggle()">Call</button>
+<script src="pinecall-webrtc.iife.global.js"></script>
+<script>
+let w;
+async function toggle() {
+  if (w) { w.disconnect(); w=null; btn.style.background='green'; return; }
+  w = new Pinecall.PinecallWebRTC("my-agent");
+  w.on("connected", () => btn.style.background='red');
+  w.on("disconnected", () => { btn.style.background='green'; w=null; });
+  await w.connect();
+}
+</script>
+```
+
+> Replace `"my-agent"` with your agent name. The SDK handles mic access, token auth, and WebRTC negotiation.
+
 ### Constructor
 
 ```typescript
-new PinecallWebRTC(appId: string, options?: WebRTCOptions)
+new PinecallWebRTC(agentId: string, options?: WebRTCOptions)
 ```
 
 | Param | Type | Description |
 |-------|------|-------------|
-| `appId` | `string` | Agent ID — the name you gave your agent in the SDK: `pc.agent("my-agent", ...)` |
-| `options` | `WebRTCOptions` | Optional configuration |
-
-> The `appId` is the agent name defined in your server-side code. For example, if your agent file has `pc.agent("receptionist", { ... })`, then `appId` is `"receptionist"`.
+| `agentId` | `string` | Agent ID — must match the name you registered (e.g., `pc.agent("my-agent", ...)`) |
+| `options` | `WebRTCOptions` | Optional overrides |
 
 ### WebRTCOptions
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `token` | `string` | — | **Recommended.** Ephemeral WebRTC token from your backend (see [Authentication](#webrtc-authentication)) |
-| `server` | `string` | `"https://voice.pinecall.io"` | Pinecall server URL (for self-hosted servers) |
-| `audio` | `MediaStreamConstraints["audio"]` | Echo/noise cancellation enabled | Audio constraints for `getUserMedia` |
+| `token` | `string` | — | Pre-fetched token (skips auto-discovery) |
+| `server` | `string` | Auto-detected | Voice server URL override |
+| `audio` | `MediaStreamConstraints["audio"]` | Echo/noise cancellation | Audio constraints for `getUserMedia` |
 | `iceServers` | `RTCIceServer[]` | Fetched from server | Custom ICE servers |
 | `autoReconnect` | `boolean` | `false` | Auto-reconnect on disconnect |
 
-### WebRTC Authentication
+### WebRTC Token Authentication
 
-In production, WebRTC connections should be authenticated with an ephemeral token. This prevents agent ID collisions and ensures only your users can connect to your agents.
+Tokens are org-scoped HMAC-signed strings that authenticate WebRTC connections. The API key stays on the server.
 
-**Flow:**
-1. Your backend calls `POST https://app.pinecall.io/api/sdk/webrtc-token` with your `pk_` API key
-2. Your backend returns the token to the browser
-3. The browser passes the token to `PinecallWebRTC`
+**Auto-discovery (default):** The browser calls the event server at `localhost:4100`, which proxies to `app.pinecall.io` using the API key. Zero code needed.
+
+**Pre-fetched token:** If you have your own backend, fetch the token server-side and pass it:
 
 ```typescript
-// Your backend (Node.js example)
-app.get("/webrtc-token", async (req, res) => {
-  const { token } = await fetch("https://app.pinecall.io/api/sdk/webrtc-token", {
-    method: "POST",
-    headers: { "X-API-Key": "pk_your_key", "Content-Type": "application/json" },
-    body: JSON.stringify({ agent_id: "my-agent" }),
-  }).then(r => r.json());
-  res.json({ token });
-});
+// Option 1: Use Pinecall instance method (recommended)
+const { token, server } = await pc.getWebRTCToken("my-agent");
 
-// Browser
-const { token } = await fetch("/webrtc-token").then(r => r.json());
+// Option 2: Standalone helper
+import { fetchWebRTCToken } from "@pinecall/sdk";
+const { token } = await fetchWebRTCToken({ apiKey: "pk_...", agentId: "my-agent" });
+
+// Pass to browser
 const webrtc = new PinecallWebRTC("my-agent", { token });
 await webrtc.connect();
 ```
 
-> **Dev mode:** If no `token` is provided, the client falls back to plain `app_id` (no auth). This works for local development but should not be used in production.
+**Event server endpoint:** `GET /webrtc/token?agent_id=xxx` — available on the SDK event server (`:4100`). The browser calls this automatically.
 
 ### Methods
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `connect()` | `Promise<void>` | Connect to the Pinecall server via WebRTC |
+| `connect()` | `Promise<void>` | Connect via WebRTC (auto-fetches token if needed) |
 | `disconnect()` | `void` | Disconnect and clean up resources |
+| `mute()` / `unmute()` / `toggleMute()` | `void` | Mic control (local track + server-side STT) |
 | `send(data)` | `void` | Send a JSON message via the data channel |
 | `on(event, handler)` | `this` | Register an event handler |
 | `off(event, handler)` | `this` | Remove an event handler |
@@ -1213,8 +1249,11 @@ await webrtc.connect();
 | Property | Type | Description |
 |----------|------|-------------|
 | `isConnected` | `boolean` | Whether the connection is active |
+| `isMuted` | `boolean` | Whether the mic is muted |
 | `sessionId` | `string \| null` | Server-assigned session ID |
 | `pcId` | `string \| null` | Peer connection ID |
+| `localStream` | `MediaStream \| null` | User's mic stream (for visualization) |
+| `remoteStream` | `MediaStream \| null` | Agent's audio stream (for visualization) |
 
 ### Events
 

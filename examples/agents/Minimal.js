@@ -12,29 +12,25 @@ class Minimal extends GPTAgent {
   // Server-side LLM — the server calls OpenAI directly
   model = "gpt-4.1-nano";
 
-  //phone = new Phone({
-  //  number: "+13186330963",
-  //  voice: "elevenlabs:EXAVITQu4vr4xnSDxMaL",
-  //  greeting: "Hey! I'm a custom agent. Ask me anything!",
-  //});
+  voice = "elevenlabs:EXAVITQu4vr4xnSDxMaL";
+  greeting = "Hey! I'm a custom agent. Ask me anything!";
 
-  // WebRTC channel — enables browser calls via dashboard
   channels = [
-    new WebRTC({
-      voice: "elevenlabs:EXAVITQu4vr4xnSDxMaL",
-      greeting: "Hey! I'm a custom agent. Ask me anything!",
-    }),
+    new WebRTC(),
+    //new Phone({
+    //  number: "+12345",
+    //}),
     new Phone({
       number: "+13186330963",
       language: "es",
       voice: "elevenlabs:VmejBeYhbrcTPwDniox7",
       greeting: "¡Bienvenido a La Piña Dorada! ¿En qué puedo ayudarle?",
       stt: "deepgram:nova-3:es",
-      turnDetection: "smart_turn",
+      turnDetection: "smart_turn"
     })
   ];
 
-  prompt = "Eres un asistente de voz. Sé conciso. Genera respuestas largas con .!? para evaluar el TTS";
+  prompt = "You are a helpful voice assistant. Respond naturally in 2-3 sentences. Be warm and professional.";
 }
 
 export default Minimal;

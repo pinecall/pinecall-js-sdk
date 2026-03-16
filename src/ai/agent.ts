@@ -120,6 +120,8 @@ export class Agent {
         if (this.stt) cfg.stt = this.stt;
         if (this.turnDetection) cfg.turnDetection = this.turnDetection;
         if (this.interruption !== undefined) cfg.interruption = this.interruption;
+        // Include agent-level greeting so server uses it as default for channels without one
+        if (typeof this.greeting === "string" && this.greeting) (cfg as any).greeting = this.greeting;
 
         // Server-side LLM: if model is set, send it + prompt + tools to server.
         // Both GPTAgent (always) and Agent (when model is set) use server-side LLM.
@@ -320,11 +322,18 @@ export class Agent {
             call._promptsDir = "prompts";
             call._promptTemplate = this._resolvedPrompt ?? this.prompt;
 
-            // Resolve dynamic greeting
+            // Resolve greeting:
+            // - Static greetings are sent in channel/agent config → server handles TTS
+            // - Dynamic (function) greetings must be resolved client-side
             const raw = this._greetingForCall(call) ?? this.greeting;
-            if (raw) {
-                const text = typeof raw === "function" ? await raw(call) : raw;
+            if (typeof raw === "function") {
+                const text = await raw(call);
                 if (text) call.say(text);
+            }
+            // Static greetings: only call.say() if NOT using server-side LLM
+            // (server-side LLM handles greeting in session config)
+            else if (raw && !(this._serverSideLLM || this.model)) {
+                call.say(raw);
             }
 
             this.onCallStarted(call);

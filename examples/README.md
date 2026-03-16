@@ -28,7 +28,15 @@ examples/
 
 ### WebRTC Demo (no build required)
 
-Open `examples/webrtc-demo/index.html` in a browser. Edit `AGENT_ID` and `TOKEN_URL` at the top of the script.
+```bash
+# 1. Start your agent
+pinecall run examples/agents/Minimal.js
+
+# 2. Open in browser
+open examples/webrtc-demo/index.html
+```
+
+The demo auto-discovers the event server and gets a token — zero config needed.
 
 ### Run an Agent
 

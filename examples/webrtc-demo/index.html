@@ -99,8 +99,8 @@
   <script src="../../dist/pinecall-webrtc.iife.global.js"></script>
   <script>
     // ── Config ─────────────────────────────────────────────────
-    const AGENT_ID = 'minimal';
-    const TOKEN_URL = '';
+    // Agent ID from URL param or default
+    const AGENT_ID = new URLSearchParams(location.search).get('agent') || 'minimal';
 
     const { PinecallWebRTC } = Pinecall;
     let webrtc = null;
@@ -329,10 +329,8 @@
       botMessages = {};
 
       try {
-        let opts = {};
-        if (TOKEN_URL) { const r = await fetch(TOKEN_URL); const d = await r.json(); opts.token = d.token; }
-
-        webrtc = new PinecallWebRTC(AGENT_ID, opts);
+        // Just create with agent name — SDK auto-discovers everything
+        webrtc = new PinecallWebRTC(AGENT_ID);
 
         webrtc.on('connected', () => {
           status.textContent = 'Connected';

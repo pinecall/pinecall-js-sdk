@@ -77,6 +77,23 @@ export class Phone extends Channel {
             _warnTypos(numberOrConfig);
             Object.assign(this, numberOrConfig);
         }
+        // Validate phone number if one was provided
+        if (this.number) {
+            _validatePhone(this.number);
+        }
+    }
+}
+
+/** @internal Validate E.164 phone number format. Throws on invalid. */
+function _validatePhone(phone: string): void {
+    const cleaned = phone.replace(/[\s\-()]/g, "");
+    const normalized = cleaned.startsWith("+") ? cleaned : "+" + cleaned;
+    const digits = normalized.slice(1);
+    if (!/^\d+$/.test(digits)) {
+        throw new Error(`Invalid phone number "${phone}": must contain only digits after country code`);
+    }
+    if (digits.length < 7 || digits.length > 15) {
+        throw new Error(`Invalid phone number "${phone}": must have 7-15 digits (got ${digits.length})`);
     }
 }
 

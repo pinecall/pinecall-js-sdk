@@ -24,10 +24,13 @@ import type { AgentConfig, ChannelConfig, AgentEvents } from "./agent.js";
 import {
     fetchVoices as _fetchVoices,
     fetchPhones as _fetchPhones,
+    fetchWebRTCToken as _fetchWebRTCToken,
     type Voice,
     type Phone,
+    type WebRTCToken,
     type FetchVoicesOptions,
     type FetchPhonesOptions,
+    type FetchWebRTCTokenOptions,
 } from "./api.js";
 import type {
     CallStartedEvent,
@@ -214,6 +217,21 @@ export class Pinecall extends TypedEmitter<PinecallEvents> {
     /** Fetch phone numbers on your account. */
     fetchPhones(opts?: Omit<FetchPhonesOptions, "apiKey">): Promise<Phone[]> {
         return _fetchPhones({ ...opts, apiKey: this._opts.apiKey });
+    }
+
+    /**
+     * Fetch a WebRTC token for browser connections.
+     *
+     * Uses your API key (server-side) to get a signed token from
+     * app.pinecall.io. Pass the token to the browser:
+     *
+     * ```typescript
+     * const { token } = await pc.getWebRTCToken("my-agent");
+     * // Send token to browser via your API
+     * ```
+     */
+    getWebRTCToken(agentId: string): Promise<WebRTCToken> {
+        return _fetchWebRTCToken({ apiKey: this._opts.apiKey, agentId });
     }
 
     // ── Connect / Disconnect ─────────────────────────────────────────────

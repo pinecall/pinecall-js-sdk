@@ -65,6 +65,23 @@ export interface FetchPhonesOptions {
     apiUrl?: string;
 }
 
+export interface FetchWebRTCTokenOptions {
+    /** Your Pinecall API key. */
+    apiKey: string;
+    /** Agent ID to get a token for. */
+    agentId: string;
+    /** API base URL. Default: `"https://app.pinecall.io"`. */
+    apiUrl?: string;
+}
+
+/** WebRTC token response from the Pinecall API. */
+export interface WebRTCToken {
+    /** Signed HMAC token (wrt_...). */
+    token: string;
+    /** Voice server URL for the WebRTC connection. */
+    server?: string;
+}
+
 // ─── API ─────────────────────────────────────────────────────────────────
 
 const DEFAULT_API_URL = "https://app.pinecall.io";
@@ -147,6 +164,56 @@ export async function fetchPhones(opts: FetchPhonesOptions): Promise<Phone[]> {
     const raw: Record<string, unknown>[] = data.phones ?? data.phoneNumbers ?? [];
 
     return raw.map(mapPhone);
+}
+
+/**
+ * Fetch a WebRTC token for browser connections.
+ *
+ * ⚠️  This is a **server-side** helper — it uses your API key.
+ * Call this from your Node.js backend, then pass the token to the browser.
+ *
+ * @example
+ * ```ts
+ * // In your Node.js server
+ * const { token, server } = await fetchWebRTCToken({
+ *     apiKey: "pk_...",
+ *     agentId: "my-agent",
+ * });
+ * // Send token to browser via your API
+ * res.json({ token, server });
+ * ```
+ */
+export async function fetchWebRTCToken(opts: FetchWebRTCTokenOptions): Promise<WebRTCToken> {
+    const apiUrl = opts.apiUrl ?? DEFAULT_API_URL;
+
+    let res: Response;
+    try {
+        res = await fetch(`${apiUrl}/api/sdk/webrtc-token`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-API-Key": opts.apiKey,
+            },
+            body: JSON.stringify({ agent_id: opts.agentId }),
+        });
+    } catch (err) {
+        throw new Error(`Network error fetching WebRTC token: ${err}`);
+    }
+
+    if (!res.ok) {
+        const data = await res.json().catch(() => ({ error: res.statusText }));
+        throw new Error(`Failed to fetch WebRTC token: ${(data as any).error || `HTTP ${res.status}`}`);
+    }
+
+    const data = await res.json() as Record<string, unknown>;
+    if (typeof data.token !== "string") {
+        throw new Error("WebRTC token response missing 'token' field");
+    }
+
+    return {
+        token: data.token,
+        server: (data.server as string) || undefined,
+    };
 }
 
 // ─── Typed mappers ───────────────────────────────────────────────────────

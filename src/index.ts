@@ -143,11 +143,13 @@ export { Reconnector } from "./utils/reconnect.js";
 export type { ReconnectOptions } from "./utils/reconnect.js";
 
 // REST API helpers
-export { fetchVoices, fetchPhones } from "./api.js";
+export { fetchVoices, fetchPhones, fetchWebRTCToken } from "./api.js";
 export type {
     Voice,
     VoiceLanguage,
     Phone,
+    WebRTCToken,
     FetchVoicesOptions,
     FetchPhonesOptions,
+    FetchWebRTCTokenOptions,
 } from "./api.js";

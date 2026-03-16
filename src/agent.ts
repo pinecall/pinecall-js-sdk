@@ -193,6 +193,16 @@ export class Agent extends TypedEmitter<AgentEvents> {
      * agent.addChannel("webrtc");
      */
     addChannel(type: "phone" | "webrtc" | "mic", ref?: string, config?: ChannelConfig): void {
+        // Validate phone numbers early
+        if (type === "phone" && ref) {
+            const cleaned = ref.replace(/[\s\-()]/g, "");
+            const normalized = cleaned.startsWith("+") ? cleaned : "+" + cleaned;
+            const digits = normalized.slice(1);
+            if (!/^\d+$/.test(digits) || digits.length < 7 || digits.length > 15) {
+                throw new Error(`Invalid phone number "${ref}": must be E.164 format (+, 7-15 digits)`);
+            }
+        }
+
         // Track for re-registration on reconnect
         const key = ref ?? type;
         this._channels.set(key, { type, ref, config });

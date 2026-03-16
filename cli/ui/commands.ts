@@ -492,16 +492,80 @@ async function handleWebRTC(ctx: CommandContext, args: string[]): Promise<void> 
         return;
     }
 
-    // Resolve Pinecall server URL from the SDK client
-    const wsUrl = (ctx.pc as any)?._opts?.url ?? "wss://voice.pinecall.io/client";
-    const httpUrl = wsUrl.replace(/\/client\/?$/, "").replace(/^wss:\/\//, "https://").replace(/^ws:\/\//, "http://");
-
     const http = await import("node:http");
     const { exec } = await import("node:child_process");
 
-    const html = generateWebRTCPage(httpUrl, appId);
+    const html = generateWebRTCPage(appId);
 
-    const server = http.createServer((req, res) => {
+    // Read the IIFE bundle once
+    const { readFileSync, existsSync } = await import("node:fs");
+    const { join, dirname } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const __here = dirname(fileURLToPath(import.meta.url));
+    // Try sibling (compiled in dist/) first, then relative from source
+    const candidates = [
+        join(__here, "pinecall-webrtc.iife.global.js"),
+        join(__here, "..", "dist", "pinecall-webrtc.iife.global.js"),
+        join(__here, "..", "..", "dist", "pinecall-webrtc.iife.global.js"),
+    ];
+    const bundlePath = candidates.find(p => existsSync(p)) ?? null;
+    const bundleContent = bundlePath ? readFileSync(bundlePath, "utf-8") : null;
+
+    // Get API key and server URL from the Pinecall client
+    const apiKey = (ctx.pc as any)?._opts?.apiKey;
+    const wsUrl = (ctx.pc as any)?._opts?.url ?? "wss://voice.pinecall.io/client";
+    const voiceServerUrl = wsUrl
+        .replace(/\/client\/?$/, "")
+        .replace(/^wss:\/\//, "https://")
+        .replace(/^ws:\/\//, "http://");
+
+    const server = http.createServer(async (req, res) => {
+        const url = req.url ?? "/";
+        const json = (status: number, data: unknown) => {
+            res.writeHead(status, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+            res.end(JSON.stringify(data));
+        };
+
+        // Serve the bundle at /pinecall-webrtc.js
+        if (url === "/pinecall-webrtc.js") {
+            if (!bundleContent) {
+                res.writeHead(404, { "Content-Type": "text/plain" });
+                res.end("WebRTC bundle not found. Run 'npm run build'.");
+                return;
+            }
+            res.writeHead(200, {
+                "Content-Type": "application/javascript",
+                "Cache-Control": "no-cache",
+                "Access-Control-Allow-Origin": "*",
+            });
+            res.end(bundleContent);
+            return;
+        }
+
+        // GET /server-info — return voice server URL + agent IDs
+        if (url === "/server-info") {
+            json(200, { pinecallServer: voiceServerUrl, appIds: [appId] });
+            return;
+        }
+
+        // GET /webrtc/token?agent_id=xxx — fetch token using API key
+        if (url.startsWith("/webrtc/token")) {
+            const urlObj = new URL(url, `http://localhost`);
+            const agentId = urlObj.searchParams.get("agent_id");
+            if (!agentId) { json(400, { error: "Missing agent_id" }); return; }
+            if (!apiKey) { json(500, { error: "No API key. Set PINECALL_API_KEY." }); return; }
+
+            try {
+                const { fetchWebRTCToken } = await import("@pinecall/sdk");
+                const tokenData = await fetchWebRTCToken({ apiKey, agentId });
+                json(200, { ...tokenData, server: tokenData.server ?? voiceServerUrl });
+            } catch (err) {
+                json(500, { error: `Token fetch failed: ${err}` });
+            }
+            return;
+        }
+
+        // Everything else serves the HTML
         res.writeHead(200, { "Content-Type": "text/html", "Access-Control-Allow-Origin": "*" });
         res.end(html);
     });
@@ -521,7 +585,7 @@ async function handleWebRTC(ctx: CommandContext, args: string[]): Promise<void> 
     process.on("exit", () => { server.close(); });
 }
 
-function generateWebRTCPage(serverUrl: string, appId: string): string {
+function generateWebRTCPage(appId: string): string {
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -602,9 +666,8 @@ function generateWebRTCPage(serverUrl: string, appId: string): string {
     </aside>
   </div>
 
-<script src="http://localhost:4100/pinecall-webrtc.js"><\/script>
+<script src="/pinecall-webrtc.js"><\/script>
 <script>
-const SERVER_URL = "${serverUrl}";
 const AGENT_ID = "${appId}";
 const { PinecallWebRTC } = Pinecall;
 let webrtc = null, events = [], durationTimer = null, callStart = 0, botMessages = {};
@@ -701,7 +764,7 @@ async function toggleCall() {
   }
   status.textContent='Connecting…'; callRing.classList.remove('hidden'); botMessages={};
   try {
-    webrtc = new PinecallWebRTC(AGENT_ID, { server: SERVER_URL });
+    webrtc = new PinecallWebRTC(AGENT_ID);
     webrtc.on('connected', () => {
       status.textContent='Connected'; callBtn.innerHTML=xSVG; callBtn.className=redBtn;
       callRing.classList.add('hidden'); muteBtn.classList.remove('hidden');

@@ -264,7 +264,7 @@ export class EventServer {
         return this._port;
     }
 
-    private _handleApi(req: IncomingMessage, res: ServerResponse, body: any): void {
+    private async _handleApi(req: IncomingMessage, res: ServerResponse, body: any): Promise<void> {
         const url = req.url ?? "/";
         const method = req.method ?? "GET";
 
@@ -295,6 +295,52 @@ export class EventServer {
                 .replace(/^ws:\/\//, "http://");
             const appIds = [...this._agents].map(a => a.id);
             this._json(res, 200, { pinecallServer: httpUrl, appIds });
+            return;
+        }
+
+        // GET /webrtc/token?agent_id=xxx — Get a WebRTC token for browser connections
+        // Proxies to app.pinecall.io using the SDK's API key — browser never sees the key.
+        if (method === "GET" && url.startsWith("/webrtc/token")) {
+            const urlObj = new URL(url, `http://${req.headers.host ?? "localhost"}`);
+            const agentId = urlObj.searchParams.get("agent_id");
+
+            if (!agentId) {
+                this._json(res, 400, { error: "Missing agent_id query parameter" });
+                return;
+            }
+
+            // Verify agent is attached to this event server
+            const agent = this._findAgent(agentId);
+            if (!agent) {
+                this._json(res, 404, { error: `Agent '${agentId}' not found` });
+                return;
+            }
+
+            // Get API key from the Pinecall client
+            const apiKey = (this._pc as any)?._opts?.apiKey;
+            if (!apiKey) {
+                this._json(res, 500, { error: "No API key configured" });
+                return;
+            }
+
+            try {
+                const { fetchWebRTCToken } = await import("../api.js");
+                const tokenData = await fetchWebRTCToken({ apiKey, agentId });
+
+                // Add server URL for convenience
+                const wsUrl = (this._pc as any)?._opts?.url ?? "wss://voice.pinecall.io/client";
+                const httpUrl = wsUrl
+                    .replace(/\/client\/?$/, "")
+                    .replace(/^wss:\/\//, "https://")
+                    .replace(/^ws:\/\//, "http://");
+
+                this._json(res, 200, {
+                    ...tokenData,
+                    server: tokenData.server ?? httpUrl,
+                });
+            } catch (err) {
+                this._json(res, 500, { error: `Token fetch failed: ${err}` });
+            }
             return;
         }
 

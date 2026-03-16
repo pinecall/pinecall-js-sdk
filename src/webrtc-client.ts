@@ -22,19 +22,10 @@
 // ─── Types ───────────────────────────────────────────────────────────────
 
 export interface WebRTCOptions {
-    /** Pinecall server URL. Default: "https://voice.pinecall.io" */
-    server?: string;
-    /**
-     * Ephemeral WebRTC token from your backend.
-     *
-     * Get it from: POST https://app.pinecall.io/api/sdk/webrtc-token
-     * with your pk_ API key + { agent_id: "..." }.
-     *
-     * If provided, the token authenticates the connection and scopes it
-     * to your organization. If omitted, falls back to plain app_id
-     * (dev mode only).
-     */
+    /** Pre-fetched WebRTC token. If provided, skips auto-discovery. */
     token?: string;
+    /** Pinecall voice server URL override. */
+    server?: string;
     /** Audio constraints for getUserMedia. */
     audio?: MediaStreamConstraints["audio"];
     /** ICE servers override. If not provided, fetched from server. */
@@ -62,6 +53,7 @@ export interface WebRTCEventMap {
 }
 
 const DEFAULT_SERVER = "https://voice.pinecall.io";
+const DEFAULT_EVENT_SERVER = "http://localhost:4100";
 
 // ─── PinecallWebRTC ──────────────────────────────────────────────────────
 
@@ -69,6 +61,7 @@ export class PinecallWebRTC {
     private _serverUrl: string;
     private _appId: string;
     private _options: WebRTCOptions;
+    private _token: string | null = null;
 
     private _pc: RTCPeerConnection | null = null;
     private _localStream: MediaStream | null = null;
@@ -85,28 +78,27 @@ export class PinecallWebRTC {
     /**
      * Create a PinecallWebRTC instance.
      *
-     * Connects directly to Pinecall cloud (voice.pinecall.io) via WebRTC.
-     * Never connects to your local SDK server — this is a browser-only client.
-     *
-     * @param appId - Agent ID to connect to (must be registered by your SDK server).
-     * @param options - WebRTC options. Use `options.server` for self-hosted Pinecall servers.
-     *
-     * @example
      * ```typescript
      * const webrtc = new PinecallWebRTC("my-agent");
      * webrtc.on("bot.speaking", (d) => console.log(d.text));
      * await webrtc.connect();
      * ```
+     *
+     * On `connect()`, the SDK automatically gets a WebRTC token from
+     * the SDK event server (which proxies to app.pinecall.io using
+     * your API key — no secrets ever touch the browser).
+     *
+     * @param appId - Agent ID (must match the ID registered in your SDK server).
+     * @param options - Optional overrides (pre-fetched token, server URL, audio constraints).
      */
     constructor(appId: string, options?: WebRTCOptions) {
-        const server = options?.server ?? DEFAULT_SERVER;
-        // Normalize URL — strip trailing slash, convert ws:// to http://
+        const server = options?.server;
         this._serverUrl = server
-            .replace(/\/$/, "")
-            .replace(/^wss:\/\//, "https://")
-            .replace(/^ws:\/\//, "http://");
+            ? server.replace(/\/$/, "").replace(/^wss:\/\//, "https://").replace(/^ws:\/\//, "http://")
+            : DEFAULT_SERVER;
         this._appId = appId;
         this._options = options ?? {};
+        this._token = options?.token ?? null;
     }
 
     // ── Public API ───────────────────────────────────────────────────────
@@ -116,6 +108,10 @@ export class PinecallWebRTC {
         if (this._pc) throw new Error("Already connected. Call disconnect() first.");
 
         try {
+            // 0. Get token from event server (which proxies to app.pinecall.io)
+            if (!this._token) {
+                await this._fetchTokenFromEventServer();
+            }
             // 1. Get ICE servers
             const iceServers = this._options.iceServers ?? await this._fetchIceServers();
 
@@ -181,19 +177,14 @@ export class PinecallWebRTC {
             // 9. Wait for ICE gathering (with timeout)
             await this._waitForIceGathering(2000);
 
-            // 10. Send offer to server
+            // 10. Send offer to server — always use token auth
             const offerBody: Record<string, unknown> = {
                 sdp: this._pc.localDescription!.sdp,
                 type: this._pc.localDescription!.type,
+                token: this._token,
             };
 
-            // Auth: token (production) or app_id query param (dev)
-            let offerUrl = `${this._serverUrl}/webrtc/offer`;
-            if (this._options.token) {
-                offerBody.token = this._options.token;
-            } else {
-                offerUrl += `?app_id=${encodeURIComponent(this._appId)}`;
-            }
+            const offerUrl = `${this._serverUrl}/webrtc/offer`;
 
             const res = await fetch(offerUrl, {
                 method: "POST",
@@ -317,6 +308,65 @@ export class PinecallWebRTC {
                 try { (handler as Function)(...args); } catch { /* swallow */ }
             }
         }
+    }
+
+    /**
+     * Fetch token from the SDK event server (which proxies to app.pinecall.io).
+     * Tries same-origin first (when served by event server), then localhost:4100.
+     * The API key lives in Node.js and never touches the browser.
+     */
+    private async _fetchTokenFromEventServer(): Promise<void> {
+        const candidates: string[] = [];
+
+        // If page is served from a port, try same origin first
+        if (typeof location !== "undefined" && location.port) {
+            candidates.push(location.origin);
+        }
+        candidates.push(DEFAULT_EVENT_SERVER);
+
+        let lastError = "";
+
+        for (const base of candidates) {
+            try {
+                // Discover voice server URL
+                const infoRes = await fetch(`${base}/server-info`);
+                if (infoRes.ok) {
+                    const info = await infoRes.json();
+                    if (!this._options.server && info.pinecallServer) {
+                        this._serverUrl = info.pinecallServer;
+                    }
+                }
+
+                // Get token
+                const tokenRes = await fetch(
+                    `${base}/webrtc/token?agent_id=${encodeURIComponent(this._appId)}`
+                );
+                if (!tokenRes.ok) {
+                    const err = await tokenRes.json().catch(() => ({ error: tokenRes.statusText }));
+                    lastError = (err as any).error || tokenRes.statusText;
+                    continue;
+                }
+
+                const data = await tokenRes.json() as Record<string, unknown>;
+                if (typeof data.token !== "string") {
+                    lastError = "Token response missing 'token' field";
+                    continue;
+                }
+
+                this._token = data.token;
+                if (!this._options.server && typeof data.server === "string" && data.server) {
+                    this._serverUrl = data.server;
+                }
+                return;
+            } catch {
+                lastError = `Event server not reachable at ${base}`;
+            }
+        }
+
+        throw new Error(
+            `Could not get WebRTC token: ${lastError}. ` +
+            "Make sure your agent is running (pinecall run MyAgent.js)."
+        );
     }
 
     private async _fetchIceServers(): Promise<RTCIceServer[]> {
