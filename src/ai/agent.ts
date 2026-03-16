@@ -79,6 +79,11 @@ export class Agent {
     phone?: Phone;
     /** All channels (phones, WebRTC, etc.). */
     channels?: (Phone | WebRTC | Channel)[];
+    /**
+     * WebRTC channel. Every agent gets one by default (inherits agent voice/greeting).
+     * Set to `false` to disable. Set to `new WebRTC({ ... })` to override config.
+     */
+    webrtc?: WebRTC | false;
 
     // ── Internal ─────────────────────────────────────────────────────────
 
@@ -195,6 +200,12 @@ export class Agent {
         const all: Channel[] = [];
         if (this.phone) all.push(this.phone);
         if (this.channels) all.push(...this.channels);
+
+        // Auto-add WebRTC channel if none declared (opt-out via webrtc = false)
+        const hasExplicitWebRTC = all.some(ch => ch instanceof WebRTC);
+        if (!hasExplicitWebRTC && this.webrtc !== false) {
+            all.push(this.webrtc instanceof WebRTC ? this.webrtc : new WebRTC());
+        }
 
         for (const ch of all) {
             const ref = ch instanceof Phone ? ch.number : undefined;

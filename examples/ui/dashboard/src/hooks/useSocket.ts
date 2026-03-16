@@ -33,6 +33,8 @@ export interface SocketState {
   userMetrics: React.MutableRefObject<AudioMetrics | null>;
   botMetrics: React.MutableRefObject<AudioMetrics | null>;
   activePhones: string[];
+  /** Whether any agent has a WebRTC channel registered */
+  hasWebRTC: boolean;
   /** Call history — completed calls with conversation snapshots */
   callHistory: CallHistoryEntry[];
   send: (msg: any) => void;
@@ -59,6 +61,7 @@ export function useSocket(): SocketState {
   const [sessionType, setSessionType] = useState<string | null>(null);
   const [duration, setDuration] = useState(0);
   const [activePhones, setActivePhones] = useState<string[]>([]);
+  const [hasWebRTC, setHasWebRTC] = useState(false);
   const [callHistory, setCallHistory] = useState<CallHistoryEntry[]>([]);
   const [viewingHistoryId, setViewingHistoryId] = useState<string | null>(null);
 
@@ -170,6 +173,11 @@ export function useSocket(): SocketState {
         setConnected(false);
         break;
       case 'server.reconnecting':
+        break;
+
+      // ─── Channel events ──────────────────────────────────────────────
+      case 'channel.added':
+        if (data.type === 'webrtc') setHasWebRTC(true);
         break;
 
       // ─── Phone events ───────────────────────────────────────────────
@@ -430,7 +438,7 @@ export function useSocket(): SocketState {
   return {
     connected, agents, calls, messages, eventLog, callStatus,
     sessionId, sessionFrom, sessionType, duration,
-    userMetrics, botMetrics, activePhones, callHistory,
+    userMetrics, botMetrics, activePhones, hasWebRTC, callHistory,
     send, clearMessages, clearEvents, viewHistoryCall, viewingHistoryId,
     saveWebRTCToHistory,
   };

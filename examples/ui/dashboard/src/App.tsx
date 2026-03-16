@@ -152,7 +152,7 @@ export default function App() {
 
           {/* Call controls */}
           <div className="flex items-center gap-2">
-            {!isAnythingActive && webrtc.status === 'idle' && socket.agents.length > 0 && (
+            {!isAnythingActive && webrtc.status === 'idle' && socket.agents.length > 0 && socket.hasWebRTC && (
               <button
                 onClick={handleStartWebRTC}
                 disabled={!socket.connected}
