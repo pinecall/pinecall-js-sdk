@@ -1,28 +1,29 @@
-# WebRTC Custom UI Example
+# WebRTC Demo
 
-A minimal voice agent UI — **HTML + Tailwind CSS + ~30 lines of JS**. No build tools, no React, no bundler.
+Pure HTML + JS voice agent UI — no build tools, no React, no bundler.
 
 ## Quick Start
 
 ```bash
 # 1. Start your agent
-pinecall server examples/agents/Minimal.js
+pinecall run examples/agents/Minimal.js
 
 # 2. Open in browser
-open examples/webrtc-ui/index.html
+open examples/webrtc-demo/index.html
 ```
+
+Edit `AGENT_ID` and `TOKEN_URL` at the top of the `<script>` block in `index.html`.
 
 ## How It Works
 
-The example loads the pre-built `pinecall-webrtc.iife.global.js` (~5KB) which exposes `Pinecall.PinecallWebRTC` globally.
+Loads the pre-built IIFE bundle which exposes `Pinecall.PinecallWebRTC` globally:
 
 ```html
 <script src="../../dist/pinecall-webrtc.iife.global.js"></script>
 <script>
   const { PinecallWebRTC } = Pinecall;
 
-  // Auto-discovers the Pinecall server from your SDK server
-  const webrtc = await PinecallWebRTC.fromSDKServer('http://localhost:4100', 'my-agent');
+  const webrtc = new PinecallWebRTC('my-agent');
 
   webrtc.on('connected',    ()  => console.log('Connected!'));
   webrtc.on('user.message', (d) => console.log('User:', d.text));
@@ -35,36 +36,30 @@ The example loads the pre-built `pinecall-webrtc.iife.global.js` (~5KB) which ex
 </script>
 ```
 
-## Architecture
+## Features
 
-```
-Browser
-  │
-  ├── GET /server-info ──→ SDK Server (:4100) → returns Pinecall server URL
-  │
-  └── WebRTC direct ──→ Pinecall Server
-      ├── Mic audio → STT/VAD
-      ├── TTS audio → speaker
-      └── Data channel → events (transcripts, bot.word, etc.)
-```
+- **Dual audio waveform** — green (user mic) / purple (agent TTS)
+- **Chat bubbles** with word-by-word streaming
+- **Events panel** (toggle) showing all data channel events
+- **Mute button** and call duration timer
+- **Token auth** support for production
 
 ## API
 
 | Method | Description |
 |--------|-------------|
-| `PinecallWebRTC.fromSDKServer(url, agentId)` | Create instance with auto server discovery |
+| `new PinecallWebRTC(agentId, opts?)` | Create instance |
 | `connect()` | Start WebRTC call |
 | `disconnect()` | End call |
 | `mute()` / `unmute()` / `toggleMute()` | Mic control (local + server) |
 | `on(event, handler)` | Listen for events |
 | `isMuted` / `isConnected` | State getters |
+| `localStream` / `remoteStream` | MediaStreams for visualization |
 
 ## Building the SDK Script
 
 If you modify `src/webrtc-client.ts`, rebuild with:
 
 ```bash
-npx tsup
+npm run build
 ```
-
-This outputs `dist/pinecall-webrtc.iife.global.js` (minified IIFE bundle).

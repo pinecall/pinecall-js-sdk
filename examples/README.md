@@ -33,5 +33,5 @@ Open `examples/webrtc-demo/index.html` in a browser. Edit `AGENT_ID` and `TOKEN_
 ### Run an Agent
 
 ```bash
-node examples/agents/Minimal.js
+pinecall run examples/agents/Minimal.js
 ```
