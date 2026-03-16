@@ -35,6 +35,8 @@ export interface SocketState {
   activePhones: string[];
   /** Whether any agent has a WebRTC channel registered */
   hasWebRTC: boolean;
+  /** Language presets inferred from Phone channels */
+  languages: Record<string, Record<string, unknown>>;
   /** Call history — completed calls with conversation snapshots */
   callHistory: CallHistoryEntry[];
   send: (msg: any) => void;
@@ -62,6 +64,7 @@ export function useSocket(): SocketState {
   const [duration, setDuration] = useState(0);
   const [activePhones, setActivePhones] = useState<string[]>([]);
   const [hasWebRTC, setHasWebRTC] = useState(false);
+  const [languages, setLanguages] = useState<Record<string, Record<string, unknown>>>({});
   const [callHistory, setCallHistory] = useState<CallHistoryEntry[]>([]);
   const [viewingHistoryId, setViewingHistoryId] = useState<string | null>(null);
 
@@ -168,6 +171,10 @@ export function useSocket(): SocketState {
       case 'server.connected':
         setConnected(true);
         setAgents(data.agents ?? []);
+        // Store language presets if available
+        if (data.languages && data.languages.length > 0) {
+          setLanguages(data.languages[0]);
+        }
         break;
       case 'server.disconnected':
         setConnected(false);
@@ -438,7 +445,7 @@ export function useSocket(): SocketState {
   return {
     connected, agents, calls, messages, eventLog, callStatus,
     sessionId, sessionFrom, sessionType, duration,
-    userMetrics, botMetrics, activePhones, hasWebRTC, callHistory,
+    userMetrics, botMetrics, activePhones, hasWebRTC, languages, callHistory,
     send, clearMessages, clearEvents, viewHistoryCall, viewingHistoryId,
     saveWebRTCToHistory,
   };

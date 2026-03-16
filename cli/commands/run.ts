@@ -180,7 +180,7 @@ async function runSingle(
     attachEvents(agent.core);
     attachLLMEvents(agent.core);
 
-    startInput({ agent: agent.core, pc: agent.pinecall });
+    startInput({ agent: agent.core, pc: agent.pinecall, sourceAgent: agent });
     ensureCursor();
 
     if (dialTo) {
@@ -238,7 +238,7 @@ async function runMultiple(
 
     // Input — binds to the first agent for commands, all agents available for /dial
     if (firstAgent) {
-        startInput({ agent: firstAgent.core, pc: firstAgent.pinecall, agents: agentsMap });
+        startInput({ agent: firstAgent.core, pc: firstAgent.pinecall, agents: agentsMap, sourceAgent: firstAgent });
         ensureCursor();
     }
 }

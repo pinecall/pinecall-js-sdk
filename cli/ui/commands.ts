@@ -19,6 +19,8 @@ export interface CommandContext {
     pc?: Pinecall;
     /** All loaded agents (for multi-agent /dial). Key = agent name/id. */
     agents?: Map<string, Agent>;
+    /** Original AI agent instance (has channels, voice, etc). */
+    sourceAgent?: any;
     instructions: string;
     log?: (msg: string) => void;
     /** Returns raw LLM history for a call (JSON-serializable messages array). */
@@ -496,7 +498,34 @@ async function handleWebRTC(ctx: CommandContext, args: string[]): Promise<void> 
     const http = await import("node:http");
     const { exec } = await import("node:child_process");
 
-    const html = generateWebRTCPage(appId);
+    // Extract language presets from agent channels
+    // Build phone language presets first, then prepend "default" so it's selected initially
+    const phoneLangs: Record<string, Record<string, unknown>> = {};
+    const agentAny = (ctx.sourceAgent || ctx.agent) as any;
+    const allCh = [...(agentAny.channels || []), ...(agentAny.phone ? [agentAny.phone] : [])];
+    for (const ch of allCh) {
+        if (ch?.type === "phone" && ch.language) {
+            const lang = ch.language;
+            if (!phoneLangs[lang]) {
+                const p: Record<string, unknown> = { label: lang.toUpperCase(), language: lang };
+                if (ch.voice) p.voice = ch.voice;
+                if (ch.stt) p.stt = ch.stt;
+                if (ch.turnDetection) p.turnDetection = ch.turnDetection;
+                if (typeof ch.greeting === "string" && ch.greeting) p.greeting = ch.greeting;
+                phoneLangs[lang] = p;
+            }
+        }
+    }
+    // "default" first so the <select> starts with EN (WebRTC default)
+    const langPresets: Record<string, Record<string, unknown>> = {};
+    if (Object.keys(phoneLangs).length > 0) {
+        const def: Record<string, unknown> = { label: "EN (Default)", language: agentAny.language || "en" };
+        if (agentAny.voice) def.voice = agentAny.voice;
+        langPresets["default"] = def;
+        Object.assign(langPresets, phoneLangs);
+    }
+
+    const html = generateWebRTCPage(appId, langPresets);
 
     // Read the IIFE bundle once
     const { readFileSync, existsSync } = await import("node:fs");
@@ -586,7 +615,9 @@ async function handleWebRTC(ctx: CommandContext, args: string[]): Promise<void> 
     process.on("exit", () => { server.close(); });
 }
 
-function generateWebRTCPage(appId: string): string {
+function generateWebRTCPage(appId: string, langPresets: Record<string, Record<string, unknown>> = {}): string {
+    const hasLangs = Object.keys(langPresets).length > 1;
+    const langsJSON = JSON.stringify(langPresets);
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -644,7 +675,10 @@ function generateWebRTCPage(appId: string): string {
           </div>
         </div>
       </div>
-      <div class="flex items-center justify-center gap-4 pt-6">
+      <div class="flex items-center justify-center gap-4 pt-6">${hasLangs ? `
+        <select id="langSelect" onchange="switchLang(this.value)" class="text-xs py-2 px-3 rounded-lg glass text-gray-300 cursor-pointer outline-none" style="min-width:90px">
+          ${Object.entries(langPresets).map(([k, v]) => `<option value="${k}" style="background:#0b0b18">${(v.label as string) || k}</option>`).join('')}
+        </select>` : ''}
         <button id="muteBtn" onclick="doMute()" class="hidden w-12 h-12 rounded-full glass text-lg hover:bg-white/5 transition cursor-pointer">🎙️</button>
         <div class="relative">
           <button id="callBtn" onclick="toggleCall()"
@@ -672,6 +706,29 @@ function generateWebRTCPage(appId: string): string {
 const AGENT_ID = "${appId}";
 const { PinecallWebRTC } = Pinecall;
 let webrtc = null, events = [], durationTimer = null, callStart = 0, botMessages = {};
+const LANG_PRESETS = ${langsJSON};
+let selectedConfig = null; // Pre-call language config
+function switchLang(key) {
+  const p = LANG_PRESETS[key]; if (!p) return;
+  const cfg = {};
+  if (p.voice) cfg.voice = p.voice;
+  if (p.stt) cfg.stt = p.stt;
+  if (p.language) cfg.language = p.language;
+  if (p.turnDetection) cfg.turnDetection = p.turnDetection;
+  if (p.greeting) cfg.greeting = p.greeting;
+  if (webrtc) {
+    // Mid-call: send configure action
+    if (Object.keys(cfg).length > 0) {
+      webrtc.send({ action: 'configure', ...cfg });
+      addMsg('system', 'Language → ' + (p.label || key));
+      addEvent({event:'configure', ...cfg});
+    }
+  } else {
+    // Pre-call: store for next connect
+    selectedConfig = (key === 'default') ? null : cfg;
+    status.textContent = 'Ready — ' + (p.label || key);
+  }
+}
 let audioCtx = null, waveAnimFrame = null;
 let userAnalyser = null, agentAnalyser = null;
 let userHistory = new Array(80).fill(0), agentHistory = new Array(80).fill(0);
@@ -765,7 +822,8 @@ async function toggleCall() {
   }
   status.textContent='Connecting…'; callRing.classList.remove('hidden'); botMessages={};
   try {
-    webrtc = new PinecallWebRTC(AGENT_ID);
+    const opts = selectedConfig ? { config: selectedConfig } : {};
+    webrtc = new PinecallWebRTC(AGENT_ID, opts);
     webrtc.on('connected', () => {
       status.textContent='Connected'; callBtn.innerHTML=xSVG; callBtn.className=redBtn;
       callRing.classList.add('hidden'); muteBtn.classList.remove('hidden');

@@ -24,6 +24,26 @@ export default function App() {
   const [selectedEvent, setSelectedEvent] = useState<EventEntry | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [phones, setPhones] = useState<PhoneInfo[]>([]);
+  const [selectedLang, setSelectedLang] = useState('default');
+
+  const langKeys = Object.keys(socket.languages);
+  const hasLanguages = langKeys.length > 1;
+
+  const handleLanguageChange = useCallback((lang: string) => {
+    setSelectedLang(lang);
+    const preset = socket.languages[lang];
+    if (!preset) return;
+    // Build config from preset (exclude label)
+    const config: Record<string, unknown> = {};
+    if (preset.voice) config.voice = preset.voice;
+    if (preset.stt) config.stt = preset.stt;
+    if (preset.language) config.language = preset.language;
+    if (preset.turnDetection) config.turnDetection = preset.turnDetection;
+    // If mid-call, send config change immediately
+    if (webrtc.status === 'connected' && Object.keys(config).length > 0) {
+      webrtc.configure(config);
+    }
+  }, [socket.languages, webrtc]);
 
   const onRefresh = useCallback(() => setRefreshKey(k => k + 1), []);
   const isPhoneCall = socket.callStatus !== 'idle';
@@ -153,15 +173,31 @@ export default function App() {
           {/* Call controls */}
           <div className="flex items-center gap-2">
             {!isAnythingActive && webrtc.status === 'idle' && socket.agents.length > 0 && socket.hasWebRTC && (
-              <button
-                onClick={handleStartWebRTC}
-                disabled={!socket.connected}
-                className="flex items-center gap-1.5 text-xs py-1.5 px-3 rounded-md transition-all cursor-pointer hover:brightness-125 active:scale-[0.97] disabled:opacity-30 disabled:cursor-not-allowed"
-                style={{ background: 'rgba(92, 245, 152, 0.08)', color: 'rgb(92, 245, 152)' }}
-              >
-                <PhoneCall size={13} />
-                WebRTC Call
-              </button>
+              <>
+                <button
+                  onClick={handleStartWebRTC}
+                  disabled={!socket.connected}
+                  className="flex items-center gap-1.5 text-xs py-1.5 px-3 rounded-md transition-all cursor-pointer hover:brightness-125 active:scale-[0.97] disabled:opacity-30 disabled:cursor-not-allowed"
+                  style={{ background: 'rgba(92, 245, 152, 0.08)', color: 'rgb(92, 245, 152)' }}
+                >
+                  <PhoneCall size={13} />
+                  WebRTC Call
+                </button>
+                {hasLanguages && (
+                  <select
+                    value={selectedLang}
+                    onChange={e => handleLanguageChange(e.target.value)}
+                    className="text-xs py-1.5 px-2 rounded-md cursor-pointer outline-none"
+                    style={{ background: 'rgba(100, 75, 140, 0.15)', color: 'rgb(190, 170, 220)', border: '1px solid rgba(60,30,90,0.4)' }}
+                  >
+                    {langKeys.map(k => (
+                      <option key={k} value={k} style={{ background: 'rgb(30, 15, 45)' }}>
+                        {(socket.languages[k]?.label as string) || k}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </>
             )}
             {webrtc.status === 'connecting' && (
               <div className="flex items-center gap-1.5 text-xs py-1.5 px-3" style={{ color: 'rgb(255, 196, 60)' }}>
@@ -171,6 +207,20 @@ export default function App() {
             )}
             {isWebRTCCall && (
               <>
+                {hasLanguages && (
+                  <select
+                    value={selectedLang}
+                    onChange={e => handleLanguageChange(e.target.value)}
+                    className="text-xs py-1.5 px-2 rounded-md cursor-pointer outline-none"
+                    style={{ background: 'rgba(100, 75, 140, 0.15)', color: 'rgb(190, 170, 220)', border: '1px solid rgba(60,30,90,0.4)' }}
+                  >
+                    {langKeys.map(k => (
+                      <option key={k} value={k} style={{ background: 'rgb(30, 15, 45)' }}>
+                        {(socket.languages[k]?.label as string) || k}
+                      </option>
+                    ))}
+                  </select>
+                )}
                 <button
                   onClick={webrtc.toggleMute}
                   className="flex items-center gap-1.5 text-xs py-1.5 px-3 rounded-md transition-all cursor-pointer hover:brightness-125 active:scale-[0.97]"

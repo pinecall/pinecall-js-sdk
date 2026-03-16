@@ -216,6 +216,7 @@ export class EventServer {
                 event: "server.connected",
                 agents: visibleAgents,
                 port: this._port,
+                languages: this._getLanguagePresets(),
             }));
 
             ws.on("message", (raw: Buffer | string) => {
@@ -678,9 +679,59 @@ export class EventServer {
             return { reason };
         }
         if (evt === "channel.added") {
-            return { type: args[0], ref: args[1] };
+            // args: [type, ref, channelInstance?]
+            const channelObj = args[2];
+            const config: Record<string, unknown> = {};
+            if (channelObj) {
+                if (channelObj.voice) config.voice = channelObj.voice;
+                if (channelObj.language) config.language = channelObj.language;
+                if (channelObj.stt) config.stt = channelObj.stt;
+                if (channelObj.turnDetection) config.turnDetection = channelObj.turnDetection;
+                if (channelObj.greeting && typeof channelObj.greeting === "string") config.greeting = channelObj.greeting;
+            }
+            return { type: args[0], ref: args[1], ...(Object.keys(config).length > 0 ? { config } : {}) };
         }
         return {};
+    }
+
+    /** Build language presets from agent channels for dashboard language switcher. */
+    private _getLanguagePresets(): Record<string, Record<string, unknown>>[] {
+        const presets: Record<string, Record<string, unknown>>[] = [];
+        for (const agent of this._agents) {
+            const agentAny = agent as any;
+            const agentPresets: Record<string, Record<string, unknown>> = {};
+
+            // Default preset from agent base config
+            agentPresets["default"] = {
+                label: "Default",
+                language: agentAny.language || "en",
+                ...(agentAny.voice ? { voice: agentAny.voice } : {}),
+            };
+
+            // Extract from channels array (Phone channels with language override become presets)
+            const channels = agentAny.channels || [];
+            const phone = agentAny.phone;
+            const allCh = phone ? [phone, ...channels] : channels;
+
+            for (const ch of allCh) {
+                if (ch?.type === "phone" && ch.language) {
+                    const lang = ch.language;
+                    if (!agentPresets[lang]) {
+                        const preset: Record<string, unknown> = { label: lang.toUpperCase(), language: lang };
+                        if (ch.voice) preset.voice = ch.voice;
+                        if (ch.stt) preset.stt = ch.stt;
+                        if (ch.turnDetection) preset.turnDetection = ch.turnDetection;
+                        if (ch.greeting && typeof ch.greeting === "string") preset.greeting = ch.greeting;
+                        agentPresets[lang] = preset;
+                    }
+                }
+            }
+
+            if (Object.keys(agentPresets).length > 1) {
+                presets.push(agentPresets);
+            }
+        }
+        return presets;
     }
 
     private _serializeEventData(data: any): Record<string, unknown> {

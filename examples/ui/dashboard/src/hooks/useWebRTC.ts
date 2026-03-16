@@ -24,6 +24,8 @@ export interface WebRTCState {
   toggleMute: () => void;
   /** Call duration in seconds */
   duration: number;
+  /** Send mid-call config change (language, voice, stt, turnDetection) */
+  configure: (config: Record<string, unknown>) => void;
 }
 
 export function useWebRTC(): WebRTCState {
@@ -79,6 +81,13 @@ export function useWebRTC(): WebRTCState {
     }
     setIsMuted(enabled);
   }, [isMuted]);
+
+  const configure = useCallback((config: Record<string, unknown>) => {
+    const dc = dcRef.current;
+    if (dc && dc.readyState === 'open') {
+      dc.send(JSON.stringify({ action: 'configure', ...config }));
+    }
+  }, []);
 
   const startCall = useCallback(async (appId: string) => {
     if (pcRef.current) return;
@@ -324,5 +333,5 @@ export function useWebRTC(): WebRTCState {
     return () => { endCall(); };
   }, [endCall]);
 
-  return { status, error, startCall, endCall, messages, userMetrics, botMetrics, isMuted, toggleMute, duration };
+  return { status, error, startCall, endCall, messages, userMetrics, botMetrics, isMuted, toggleMute, duration, configure };
 }

@@ -32,6 +32,8 @@ export interface WebRTCOptions {
     iceServers?: RTCIceServer[];
     /** Auto-reconnect on disconnect. Default: false. */
     autoReconnect?: boolean;
+    /** Initial session config overrides (language, voice, stt, turnDetection, greeting). Sent in offer body. */
+    config?: Record<string, unknown>;
 }
 
 export interface WebRTCEventMap {
@@ -183,6 +185,10 @@ export class PinecallWebRTC {
                 type: this._pc.localDescription!.type,
                 token: this._token,
             };
+            // Include initial config overrides (pre-call language selection)
+            if (this._options.config && Object.keys(this._options.config).length > 0) {
+                offerBody.config = this._options.config;
+            }
 
             const offerUrl = `${this._serverUrl}/webrtc/offer`;
 

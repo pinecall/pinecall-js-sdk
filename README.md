@@ -55,7 +55,7 @@ npm install @pinecall/sdk
   - [VAD Config](#vad-config)
   - [Turn Detection](#turn-detection)
   - [Interruption](#interruption)
-  - [Analysis](#analysis)
+  - [Analysis & Audio Metrics](#analysis--audio-metrics)
   - [Session Config](#session-config)
   - [`pinecall.config.json`](#pinecallconfigjson)
 - [Agent Database (Beta)](#agent-database-beta)
@@ -1209,6 +1209,7 @@ new PinecallWebRTC(agentId: string, options?: WebRTCOptions)
 | `audio` | `MediaStreamConstraints["audio"]` | Echo/noise cancellation | Audio constraints for `getUserMedia` |
 | `iceServers` | `RTCIceServer[]` | Fetched from server | Custom ICE servers |
 | `autoReconnect` | `boolean` | `false` | Auto-reconnect on disconnect |
+| `config` | `Record<string, unknown>` | — | Initial session config overrides (pre-call language, voice, stt, greeting, turnDetection). Sent in the offer body and applied before the session starts. |
 
 ### WebRTC Token Authentication
 
@@ -1282,7 +1283,88 @@ Send commands to the server via `webrtc.send()`:
 ```typescript
 webrtc.send({ action: "mute" });    // Mute mic (pauses STT on server)
 webrtc.send({ action: "unmute" });  // Unmute mic (resumes STT)
+
+// Mid-call language/config switch
+webrtc.send({
+  action: "configure",
+  voice: "elevenlabs:VmejBeYhbrcTPwDniox7",
+  stt: "deepgram:nova-3:es",
+  language: "es",
+  turnDetection: "smart_turn",
+});
 ```
+
+| Action | Fields | Description |
+|--------|--------|-------------|
+| `mute` | — | Mute mic (pauses STT on server) |
+| `unmute` | — | Unmute mic (resumes STT) |
+| `configure` | `voice`, `stt`, `language`, `turnDetection`, `greeting` | Change session config mid-call |
+
+### WebRTC Language Switching
+
+Switch voice, STT, turn detection, and greeting — both **before** and **during** a WebRTC call.
+
+#### Pre-call: pass config in constructor
+
+Pass initial session overrides via `config` in `WebRTCOptions`. The server applies them before the session starts, so the greeting, voice, and STT all match from the first moment:
+
+```typescript
+// Start a call in Spanish
+const webrtc = new PinecallWebRTC("my-agent", {
+  config: {
+    voice: "elevenlabs:VmejBeYhbrcTPwDniox7",
+    greeting: "¡Bienvenido! ¿En qué puedo ayudarle?",
+    stt: "deepgram:nova-3:es",
+    language: "es",
+    turnDetection: "smart_turn",
+  },
+});
+await webrtc.connect();
+// → Greeting plays in Spanish, STT listens in Spanish, voice is Spanish
+```
+
+#### Mid-call: send configure action
+
+Switch language during an active call via the data channel:
+
+```typescript
+// Switch to English mid-call
+webrtc.send({
+  action: "configure",
+  voice: "elevenlabs:EXAVITQu4vr4xnSDxMaL",
+  stt: "deepgram:nova-3:en",
+  language: "en",
+  turnDetection: "native",
+});
+```
+
+All fields are optional — only include what you want to change.
+
+#### CLI `/webrtc` language dropdown
+
+When using `pinecall console` or `pinecall run`, the `/webrtc` command opens a browser page with a language dropdown. Languages are auto-populated from Phone channel configs:
+
+```typescript
+class MyBot extends GPTAgent {
+  model = "gpt-4.1-nano";
+  voice = "elevenlabs:EXAVITQu4vr4xnSDxMaL";  // default (EN)
+  greeting = "Hey! Ask me anything!";
+
+  channels = [
+    new WebRTC(),
+    new Phone({
+      number: "+13186330963",
+      language: "es",
+      voice: "elevenlabs:VmejBeYhbrcTPwDniox7",
+      greeting: "¡Bienvenido! ¿En qué puedo ayudarle?",
+      stt: "deepgram:nova-3:es",
+      turnDetection: "smart_turn",
+    }),
+  ];
+}
+```
+
+The dropdown shows **EN (Default)** and **ES**. Select a language before or during the call — the session config updates accordingly.
 
 ---
 
@@ -1587,7 +1669,9 @@ interruption: {
 
 ---
 
-### Analysis
+### Analysis & Audio Metrics
+
+Enable real-time audio metrics for waveform visualization, energy monitoring, and VAD state.
 
 ```typescript
 config: {
@@ -1599,6 +1683,59 @@ config: {
   }
 }
 ```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `send_audio_metrics` | `boolean` | `false` | Emit `audio.metrics` events at regular intervals |
+| `audio_metrics_interval_ms` | `number` | `100` | Interval between metrics events (ms) |
+| `send_turn_audio` | `boolean` | `false` | Emit `turn.audio` with complete user audio buffer on turn end |
+| `send_bot_audio` | `boolean` | `false` | Emit `bot.audio.complete` with complete TTS audio on bot finish |
+
+#### `audio.metrics` Event
+
+Two events are emitted per interval — one for **user** (mic input) and one for **bot** (TTS output):
+
+```json
+{
+  "event": "audio.metrics",
+  "source": "user",
+  "energy_db": -23.5,
+  "rms": 0.067,
+  "peak": 0.142,
+  "is_speech": true,
+  "vad_prob": 0.92
+}
+```
+
+| Field | Type | Range | Description |
+|-------|------|-------|-------------|
+| `source` | `string` | `"user"` \| `"bot"` | Audio source — user mic or bot TTS |
+| `energy_db` | `number` | `-60` to `0` | Energy in decibels (higher = louder) |
+| `rms` | `number` | `0` to `1` | Root mean square amplitude (normalized) |
+| `peak` | `number` | `0` to `1` | Peak amplitude (normalized) |
+| `is_speech` | `boolean` | — | VAD speech detection state (user) or `rms > 0.01` (bot) |
+| `vad_prob` | `number` | `0` to `1` | VAD probability (user) or `1.0`/`0.0` (bot) |
+
+#### Waveform Visualization (Minimal)
+
+```typescript
+const history: number[] = [];
+
+agent.on("audio.metrics", (evt) => {
+  if (evt.source === "user") {
+    history.push(evt.rms * 5); // scale for visibility
+    if (history.length > 80) history.shift();
+    drawBars(history); // your canvas draw function
+  }
+});
+
+// For WebRTC:
+webrtc.on("audio.metrics", (evt) => {
+  // same structure — source is "user" or "bot"
+});
+```
+
+Use `rms` for smooth waveform bars, `is_speech` to color active speech, and `source` to render user and bot waveforms side by side.
 
 ---
 

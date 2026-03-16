@@ -77,6 +77,8 @@ export interface InputOptions {
     pc: Pinecall;
     /** All loaded agents for multi-agent commands. */
     agents?: Map<string, Agent>;
+    /** Original AI agent instance (has channels, voice, language, etc). */
+    sourceAgent?: any;
     /** Optional: returns raw LLM history for a call. */
     getHistory?: (callId: string) => unknown[] | undefined;
 }
@@ -117,6 +119,7 @@ export function startInput(opts: InputOptions): void {
                 agent,
                 pc,
                 agents: opts.agents,
+                sourceAgent: opts.sourceAgent,
                 instructions: "",
                 log: logLine,
                 getHistory: opts.getHistory,
