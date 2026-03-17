@@ -35,6 +35,7 @@ import {
 import { Call, type Turn } from "../call.js";
 
 import { Channel, Phone, WebRTC } from "./channel.js";
+import { getToolMetadata } from "./decorators/tool.js";
 
 // ─── Types ───────────────────────────────────────────────────────────────
 
@@ -157,23 +158,48 @@ export class Agent {
         return cfg;
     }
 
-    /** @internal Collect tool definitions from static _tools registry. */
+    /** @internal Collect tool definitions from static _tools registry + @tool decorators. */
     private _getToolDefinitions(): Array<{ type: string; function: { name: string; description: string; parameters: Record<string, unknown> } }> {
         const Ctor = this.constructor as any;
         const toolDefs: Map<string, { description: string; parameters: Record<string, unknown>; handler: string }> | undefined = Ctor._tools;
-        if (!toolDefs || toolDefs.size === 0) return [];
+        const seen = new Set<string>();
 
         const tools: Array<{ type: string; function: { name: string; description: string; parameters: Record<string, unknown> } }> = [];
-        for (const [name, def] of toolDefs) {
+
+        // 1. Static defineTool() tools (highest priority)
+        if (toolDefs) {
+            for (const [name, def] of toolDefs) {
+                seen.add(name);
+                tools.push({
+                    type: "function",
+                    function: {
+                        name,
+                        description: def.description,
+                        parameters: def.parameters,
+                    },
+                });
+            }
+        }
+
+        // 2. @tool decorator tools (only if not already defined via defineTool)
+        const decoratorMeta = getToolMetadata(Object.getPrototypeOf(this));
+        for (const meta of decoratorMeta) {
+            if (seen.has(meta.methodName)) continue;
+            seen.add(meta.methodName);
             tools.push({
                 type: "function",
                 function: {
-                    name,
-                    description: def.description,
-                    parameters: def.parameters,
+                    name: meta.methodName,
+                    description: meta.description,
+                    parameters: {
+                        type: "object",
+                        properties: meta.schema,
+                        required: meta.required,
+                    },
                 },
             });
         }
+
         return tools;
     }
 

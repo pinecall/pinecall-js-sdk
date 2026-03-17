@@ -37,3 +37,5 @@ export type { ToolDef, GPTAgentOptions } from "./gpt-agent.js";
 // Channel classes
 export { Channel, Phone, WebRTC } from "./channel.js";
 
+// Decorators
+export { tool } from "./decorators/tool.js";

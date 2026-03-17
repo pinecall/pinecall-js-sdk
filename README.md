@@ -710,21 +710,51 @@ All history methods use a request/response protocol (`history.get` → `history.
 
 ### Tool Calling
 
-Define tools as class methods + register with `defineTool()`:
+#### `@tool` Decorator (TypeScript)
+
+Use the `@tool` decorator to define tools inline — collocated with their method:
 
 ```typescript
+import { GPTAgent, WebRTC, tool } from "@pinecall/sdk/ai";
+
 class Agent extends GPTAgent {
   model = "gpt-4.1-nano";
+  channels = [new WebRTC()];
   prompt = "You help book appointments.";
 
+  @tool("Book an appointment", {
+    date: { type: "string", description: "Date (YYYY-MM-DD)" },
+    time: { type: "string", description: "Time (HH:MM)" },
+  })
   async bookAppointment({ date, time }: { date: string; time: string }) {
     const result = await db.book(date, time);
     return { success: true, confirmationId: result.id };
   }
 
+  @tool("Get current weather", {
+    city: { type: "string", description: "City name" },
+  })
   async getWeather({ city }: { city: string }) {
     const data = await weatherApi.get(city);
     return { temp: data.temp, condition: data.condition };
+  }
+}
+```
+
+The decorator supports both TC39 stage-3 decorators (esbuild/tsup) and legacy `experimentalDecorators`.
+
+#### `defineTool()` (JavaScript fallback)
+
+For plain JavaScript without decorator support, use the static `defineTool()` method:
+
+```javascript
+class Agent extends GPTAgent {
+  model = "gpt-4.1-nano";
+  prompt = "You help book appointments.";
+
+  async bookAppointment({ date, time }) {
+    const result = await db.book(date, time);
+    return { success: true, confirmationId: result.id };
   }
 }
 
@@ -732,11 +762,9 @@ Agent.defineTool("bookAppointment", "Book an appointment", {
   date: { type: "string", description: "Date (YYYY-MM-DD)" },
   time: { type: "string", description: "Time (HH:MM)" },
 });
-
-Agent.defineTool("getWeather", "Get current weather", {
-  city: { type: "string", description: "City name" },
-});
 ```
+
+Both approaches can coexist — if the same method is defined with both `@tool` and `defineTool()`, `defineTool()` takes priority.
 
 Tool parameters follow [JSON Schema](https://json-schema.org/) format. The return value is sent back to the LLM as the tool result.
 
