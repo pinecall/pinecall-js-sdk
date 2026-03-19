@@ -106,7 +106,7 @@ export async function run(argv: string[]): Promise<void> {
     const input = args.positional;
     if (!input) {
         throw new CliError("Usage: pinecall run <AgentName|folder>\n" +
-            "  For server mode (REST + WS): pinecall server <AgentName|folder>");
+            "  For server mode (REST + WS): pinecall serve <AgentName|folder>");
     }
 
     const env = resolveEnv();

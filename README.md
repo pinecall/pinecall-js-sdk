@@ -28,8 +28,8 @@ npm install @pinecall/sdk
   - [Tool Calling](#tool-calling)
   - [ConversationHistory](#conversationhistory)
 - [CLI](#cli)
-  - [`pinecall console`](#pinecall-console)
-  - [`pinecall server`](#pinecall-server)
+  - [`pinecall run`](#pinecall-run)
+  - [`pinecall serve`](#pinecall-serve)
 - [Server (`@pinecall/sdk/server`)](#server)
   - [EventServer](#eventserver)
   - [REST API](#rest-api)
@@ -84,8 +84,8 @@ Run it:
 
 ```bash
 export PINECALL_API_KEY=pk_...
-pinecall console MyBot.ts      # Interactive console with TUI
-pinecall server MyBot.ts       # Production server + Dashboard UI
+pinecall run MyBot.ts          # Interactive console with TUI
+pinecall serve MyBot.ts        # Production server + Dashboard UI
 ```
 
 ### 2. Agent with Tools
@@ -128,9 +128,9 @@ Create `pinecall.config.json` to configure the server:
 ```
 
 ```bash
-pinecall server              # starts server, loads agents from ./agents/
-pinecall server ./agents     # explicit agents directory
-pinecall server --disable-ui # API only, no Dashboard
+pinecall serve               # starts server, loads agents from ./agents/
+pinecall serve ./agents      # explicit agents directory
+pinecall serve --disable-ui  # API only, no Dashboard
 ```
 
 ---
@@ -827,15 +827,15 @@ async onTurn(turn, call, history) {
 npm install -g @pinecall/sdk   # or use npx
 ```
 
-### `pinecall console`
+### `pinecall run`
 
 Interactive agent console with a TUI (Terminal User Interface) for development.
 
 ```bash
-pinecall console MyBot.ts           # single agent file
-pinecall console ./agents/          # directory of agents
-pinecall console MyBot.ts --dial=+12025551234  # auto-dial on start
-pinecall console MyBot.ts --phone=+13186330963 # specify phone
+pinecall run MyBot.ts           # single agent file
+pinecall run ./agents/          # directory of agents
+pinecall run MyBot.ts --dial=+12025551234  # auto-dial on start
+pinecall run MyBot.ts --phone=+13186330963 # specify phone
 ```
 
 **TUI Features:**
@@ -844,7 +844,7 @@ pinecall console MyBot.ts --phone=+13186330963 # specify phone
 - Audio waveform
 - Interactive command prompt
 
-#### Console Commands
+#### Run Commands
 
 Once inside the console, use `/` commands:
 
@@ -884,18 +884,18 @@ Once inside the console, use `/` commands:
 
 ---
 
-### `pinecall server`
+### `pinecall serve`
 
 Start a headless production server with REST API, WebSocket events, and Dashboard UI.
 
 ```bash
-pinecall server MyBot.ts                       # single agent file
-pinecall server ./agents/                      # directory of agents
-pinecall server                                # auto-detect pinecall.config.json
-pinecall server --config=custom.json           # custom config file
-pinecall server --port=4100                    # custom port (default: 4100)
-pinecall server --host=0.0.0.0                 # bind address (default: 0.0.0.0)
-pinecall server --disable-ui                   # disable Dashboard UI
+pinecall serve MyBot.ts                        # single agent file
+pinecall serve ./agents/                       # directory of agents
+pinecall serve                                 # auto-detect pinecall.config.json
+pinecall serve --config=custom.json            # custom config file
+pinecall serve --port=4100                     # custom port (default: 4100)
+pinecall serve --host=0.0.0.0                  # bind address (default: 0.0.0.0)
+pinecall serve --disable-ui                    # disable Dashboard UI
 ```
 
 **Features:**
@@ -1169,7 +1169,7 @@ The SDK includes a built-in Dashboard UI served by EventServer at `http://localh
 **Disable:**
 
 ```bash
-pinecall server --disable-ui
+pinecall serve --disable-ui
 ```
 
 Or in `pinecall.config.json`:
@@ -1403,7 +1403,7 @@ All fields are optional — only include what you want to change.
 
 #### CLI `/webrtc` language dropdown
 
-When using `pinecall console` or `pinecall run`, the `/webrtc` command opens a browser page with a language dropdown. Languages are auto-populated from Phone channel configs:
+When using `pinecall run`, the `/webrtc` command opens a browser page with a language dropdown. Languages are auto-populated from Phone channel configs:
 
 ```typescript
 class MyBot extends GPTAgent {
@@ -1847,7 +1847,7 @@ Server configuration file. Auto-detected in the current directory. **This file c
 CLI flags always override config file values:
 
 ```bash
-pinecall server --port=8080 --disable-ui   # overrides config
+pinecall serve --port=8080 --disable-ui    # overrides config
 ```
 
 ---
@@ -1856,7 +1856,7 @@ pinecall server --port=8080 --disable-ui   # overrides config
 
 > ⚠️ **Beta Feature** — CRUD for agents without tools. Tools support coming soon.
 
-When running `pinecall server`, agents can be created dynamically via the REST API. The server persists these agents to a JSON file (`agents.db.json`) in the working directory.
+When running `pinecall serve`, agents can be created dynamically via the REST API. The server persists these agents to a JSON file (`agents.db.json`) in the working directory.
 
 **How it works:**
 

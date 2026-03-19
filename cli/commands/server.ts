@@ -1,11 +1,11 @@
 /**
- * `pinecall server` — headless server mode with REST API + WS events.
+ * `pinecall serve` — headless server mode with REST API + WS events.
  *
  * Supports three source modes:
- *   pinecall server Agent.js               → code-based agent(s)
- *   pinecall server ./agents               → directory of agent files
- *   pinecall server                        → reads pinecall.json (declarative)
- *   pinecall server --config=custom.json   → custom config file
+ *   pinecall serve Agent.js               → code-based agent(s)
+ *   pinecall serve ./agents               → directory of agent files
+ *   pinecall serve                        → reads pinecall.json (declarative)
+ *   pinecall serve --config=custom.json   → custom config file
  */
 
 import { resolveEnv, requireOpenAI } from "../lib/env.js";
@@ -182,8 +182,8 @@ export async function server(argv: string[]): Promise<void> {
         configMode = await findConfig(configFlag);
         if (!configMode && !input) {
             throw new CliError(
-                "Usage: pinecall server <AgentName|folder> [--port=4100]\n" +
-                "       pinecall server [--config=pinecall.json]\n\n" +
+                "Usage: pinecall serve <AgentName|folder> [--port=4100]\n" +
+                "       pinecall serve [--config=pinecall.json]\n\n" +
                 "No agent file specified and no pinecall.json found in current directory."
             );
         }
@@ -196,7 +196,7 @@ export async function server(argv: string[]): Promise<void> {
 
     // ── Banner ──
     console.log("");
-    console.log(`  ${chalk.hex("#7C3AED")("⚡")} ${chalk.bold("pinecall server")}`);
+    console.log(`  ${chalk.hex("#7C3AED")("⚡")} ${chalk.bold("pinecall serve")}`);
     console.log("");
 
     const { EventServer } = await import("@pinecall/sdk/server");

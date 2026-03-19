@@ -14,8 +14,8 @@ const HELP = `
   ${chalk.bold("Usage:")} pinecall <command> [options]
 
   ${chalk.bold("Commands:")}
-    console <agent>     Interactive agent console (dev mode with TUI)
-    server <agent|dir>  Start headless server (REST + WS + Dashboard)
+    run <agent>         Interactive agent console (dev mode with TUI)
+    serve <agent|dir>   Start headless server (REST + WS + Dashboard)
     help                Show this help message
 
   ${chalk.bold("Environment:")}
@@ -24,13 +24,13 @@ const HELP = `
     PINECALL_URL        ${chalk.dim("(optional)")} Custom WebSocket URL
 
   ${chalk.bold("Examples:")}
-    ${chalk.dim("$")} pinecall console Agent.js
-    ${chalk.dim("$")} pinecall console ./agents
-    ${chalk.dim("$")} pinecall server Agent.js
-    ${chalk.dim("$")} pinecall server ./agents
-    ${chalk.dim("$")} pinecall server --disable-ui
+    ${chalk.dim("$")} pinecall run Agent.js
+    ${chalk.dim("$")} pinecall run ./agents
+    ${chalk.dim("$")} pinecall serve Agent.js
+    ${chalk.dim("$")} pinecall serve ./agents
+    ${chalk.dim("$")} pinecall serve --disable-ui
 
-  ${chalk.bold("Console Commands:")} /phones /voices /dial /config /hold /mute /history /help
+  ${chalk.bold("Run Commands:")} /phones /voices /dial /config /hold /mute /history /help
 `;
 
 async function main(): Promise<void> {
@@ -52,11 +52,12 @@ async function main(): Promise<void> {
             console.error(`  ${chalk.dim("ℹ")} ${chalk.dim(`"${command}" moved to interactive CLI. Use /${command} inside pinecall run.`)}`);
             return;
 
-        case "console":
-        case "run":  // kept as alias
+        case "run":
+        case "console":  // backward compat alias
             return (await import("./commands/run.js")).run(argv);
 
-        case "server":
+        case "serve":
+        case "server":  // backward compat alias
             return (await import("./commands/server.js")).server(argv);
 
         case "help":
