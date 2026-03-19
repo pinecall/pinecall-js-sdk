@@ -53,12 +53,20 @@ async function main(): Promise<void> {
             return;
 
         case "run":
-        case "console":  // backward compat alias
             return (await import("./commands/run.js")).run(argv);
 
         case "serve":
-        case "server":  // backward compat alias
             return (await import("./commands/server.js")).server(argv);
+
+        case "console":
+            console.error(`  ${chalk.dim("ℹ")} ${chalk.dim(`"console" has been renamed. Use ${chalk.white("pinecall run")} instead.`)}`);
+            process.exit(1);
+            return;
+
+        case "server":
+            console.error(`  ${chalk.dim("ℹ")} ${chalk.dim(`"server" has been renamed. Use ${chalk.white("pinecall serve")} instead.`)}`);
+            process.exit(1);
+            return;
 
         case "help":
         case "--help":
