@@ -103,7 +103,26 @@ export function useWebRTC(): WebRTCState {
       userMetrics.current = null;
       botMetrics.current = null;
 
-      const serverUrl = await getServerUrl();
+      // Fetch WebRTC token from EventServer (which proxies to app.pinecall.io using the API key)
+      let token: string | null = null;
+      try {
+        const tokenRes = await fetch(`${API_BASE}/webrtc/token?agent_id=${encodeURIComponent(appId)}`);
+        if (tokenRes.ok) {
+          const tokenData = await tokenRes.json();
+          token = tokenData.token ?? null;
+          // Use server URL from token response if available
+          if (tokenData.server) {
+            serverUrlRef.current = tokenData.server;
+          }
+        } else {
+          const err = await tokenRes.json().catch(() => ({ error: tokenRes.statusText }));
+          throw new Error(err.error || `Token fetch failed: ${tokenRes.status}`);
+        }
+      } catch (err) {
+        throw new Error(`WebRTC token error: ${err instanceof Error ? err.message : err}`);
+      }
+
+      const serverUrl = serverUrlRef.current || await getServerUrl();
 
       // ICE servers
       let iceServers: RTCIceServer[] = [{ urls: 'stun:stun.l.google.com:19302' }];
@@ -182,10 +201,14 @@ export function useWebRTC(): WebRTCState {
         };
       });
 
-      const res = await fetch(`${serverUrl}/webrtc/offer?app_id=${encodeURIComponent(appId)}`, {
+      const res = await fetch(`${serverUrl}/webrtc/offer`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sdp: pc.localDescription!.sdp, type: pc.localDescription!.type }),
+        body: JSON.stringify({
+          sdp: pc.localDescription!.sdp,
+          type: pc.localDescription!.type,
+          token,
+        }),
       });
 
       if (!res.ok) {

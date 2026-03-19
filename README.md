@@ -91,7 +91,7 @@ pinecall server MyBot.ts       # Production server + Dashboard UI
 ### 2. Agent with Tools
 
 ```typescript
-import { GPTAgent, Phone } from "@pinecall/sdk/ai";
+import { GPTAgent, Phone, tool } from "@pinecall/sdk/ai";
 
 class Receptionist extends GPTAgent {
   model = "gpt-4.1-nano";
@@ -99,19 +99,20 @@ class Receptionist extends GPTAgent {
   prompt = "You are a restaurant receptionist. Help guests book tables.";
   greeting = "Hello! Welcome to La Bella. How can I help you today?";
 
+  @tool("Book a table at the restaurant", {
+    date: { type: "string", description: "Reservation date (YYYY-MM-DD)" },
+    guests: { type: "number", description: "Number of guests" },
+    name: { type: "string", description: "Name for the reservation" },
+  })
   async bookTable({ date, guests, name }: { date: string; guests: number; name: string }) {
     return { confirmed: true, date, guests, name, table: "A12" };
   }
 }
 
-Receptionist.defineTool("bookTable", "Book a table at the restaurant", {
-  date: { type: "string", description: "Reservation date (YYYY-MM-DD)" },
-  guests: { type: "number", description: "Number of guests" },
-  name: { type: "string", description: "Name for the reservation" },
-});
-
 export default Receptionist;
 ```
+
+> For plain JavaScript (no decorator support), use `Receptionist.defineTool("bookTable", ...)` instead — see [Tool Calling](#tool-calling).
 
 ### 3. Server Mode with Config File
 
@@ -404,6 +405,7 @@ class MyBot extends Agent {
 | `agent.dial({ to, from, greeting? })` | Make an outbound call |
 | `agent.addPhone(number, config?)` | Add a phone channel |
 | `agent.addChannel(type, ref?, config?)` | Add any channel type |
+| `agent.log(call, ...args)` | Log to TUI LLM pane (falls back to console) |
 
 ---
 
@@ -727,6 +729,7 @@ class Agent extends GPTAgent {
     time: { type: "string", description: "Time (HH:MM)" },
   })
   async bookAppointment({ date, time }: { date: string; time: string }) {
+    this.log(call, `📅 Booking for ${date} at ${time}`);
     const result = await db.book(date, time);
     return { success: true, confirmationId: result.id };
   }
@@ -741,7 +744,17 @@ class Agent extends GPTAgent {
 }
 ```
 
-The decorator supports both TC39 stage-3 decorators (esbuild/tsup) and legacy `experimentalDecorators`.
+The `@tool` decorator signature is:
+
+```typescript
+@tool(description: string, schema: Record<string, { type, description, ... }>, required?: string[])
+```
+
+- **description** — Human-readable description of what the tool does (sent to the LLM)
+- **schema** — Parameter schema in [JSON Schema](https://json-schema.org/) format
+- **required** — Optional list of required params (defaults to all params in schema)
+
+Supports both TC39 stage-3 decorators (esbuild/tsup) and legacy `experimentalDecorators` — detection is automatic.
 
 #### `defineTool()` (JavaScript fallback)
 
@@ -766,7 +779,27 @@ Agent.defineTool("bookAppointment", "Book an appointment", {
 
 Both approaches can coexist — if the same method is defined with both `@tool` and `defineTool()`, `defineTool()` takes priority.
 
-Tool parameters follow [JSON Schema](https://json-schema.org/) format. The return value is sent back to the LLM as the tool result.
+#### Tool Logging (`this.log`)
+
+Use `this.log(call, ...args)` inside tool functions to log to the TUI LLM pane (or console if no TUI). This is preferred over `console.log` because it routes output to the correct pane in the interactive console:
+
+```typescript
+@tool("Look up a customer", {
+  phone: { type: "string", description: "Phone number" },
+})
+async lookupCustomer({ phone }: { phone: string }, call: Call) {
+  this.log(call, `🔍 Looking up ${phone}`);
+  const customer = await db.findByPhone(phone);
+  this.log(call, `✅ Found: ${customer.name}`);
+  return { name: customer.name, plan: customer.plan };
+}
+```
+
+> **Note:** Tool methods receive `(args, call)` — the second argument is the `Call` object.
+
+#### Tool Behavior
+
+Tool parameters follow [JSON Schema](https://json-schema.org/) format. The return value is serialized as JSON and sent back to the LLM as the tool result.
 
 **Tool call events** (`llm.tool_call`, `llm.tool_result`) are streamed to the Dashboard UI and WebSocket clients in real-time, so you can observe tool invocations and their results live.
 

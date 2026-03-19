@@ -217,6 +217,7 @@ export class EventServer {
                 agents: visibleAgents,
                 port: this._port,
                 languages: this._getLanguagePresets(),
+                hasWebRTC: this._anyAgentHasWebRTC(),
             }));
 
             ws.on("message", (raw: Buffer | string) => {
@@ -249,7 +250,7 @@ export class EventServer {
             });
             this._pc.on("connected", () => {
                 const agents = [...this._agents].map(a => a.id);
-                this._broadcastAll({ event: "server.connected", agents, port: this._port });
+                this._broadcastAll({ event: "server.connected", agents, port: this._port, hasWebRTC: this._anyAgentHasWebRTC() });
             });
         }
     }
@@ -692,6 +693,19 @@ export class EventServer {
             return { type: args[0], ref: args[1], ...(Object.keys(config).length > 0 ? { config } : {}) };
         }
         return {};
+    }
+
+    /** Check if any attached agent has a WebRTC channel. */
+    private _anyAgentHasWebRTC(): boolean {
+        for (const agent of this._agents) {
+            const channels = (agent as any)._channels as Map<string, { type: string }> | undefined;
+            if (channels) {
+                for (const [, ch] of channels) {
+                    if (ch.type === 'webrtc') return true;
+                }
+            }
+        }
+        return false;
     }
 
     /** Build language presets from agent channels for dashboard language switcher. */

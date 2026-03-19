@@ -171,6 +171,8 @@ export function useSocket(): SocketState {
       case 'server.connected':
         setConnected(true);
         setAgents(data.agents ?? []);
+        // Set WebRTC availability from server snapshot
+        if (data.hasWebRTC != null) setHasWebRTC(!!data.hasWebRTC);
         // Store language presets if available
         if (data.languages && data.languages.length > 0) {
           setLanguages(data.languages[0]);
