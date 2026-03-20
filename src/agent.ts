@@ -388,6 +388,8 @@ export class Agent extends TypedEmitter<AgentEvents> {
                         );
                         this._calls.set(callId, call);
                         this._proxyCallEvents(call);
+                        // Emit call.started so greeting/hook handlers run for WebRTC sessions
+                        this.emit("call.started", call);
                     }
 
                     if (call) {
