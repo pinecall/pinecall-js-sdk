@@ -121,7 +121,7 @@ export class Agent {
     }
 
     /** @internal Build AgentConfig from current field values (called in start()). */
-    private _buildAgentConfig(): AgentConfig {
+    private async _buildAgentConfig(): Promise<AgentConfig> {
         const cfg: AgentConfig = {};
         if (this.voice) cfg.voice = this.voice;
         if (this.language) cfg.language = this.language;
@@ -129,7 +129,16 @@ export class Agent {
         if (this.turnDetection) cfg.turnDetection = this.turnDetection;
         if (this.interruption !== undefined) cfg.interruption = this.interruption;
         // Include agent-level greeting so server uses it as default for channels without one
-        if (typeof this.greeting === "string" && this.greeting) (cfg as any).greeting = this.greeting;
+        // Dynamic (function) greetings are resolved now — WebRTC sessions have no call.started,
+        // so the server needs the greeting as a static string in the config.
+        if (typeof this.greeting === "string" && this.greeting) {
+            (cfg as any).greeting = this.greeting;
+        } else if (typeof this.greeting === "function") {
+            try {
+                const text = await this.greeting(null as any);
+                if (text) (cfg as any).greeting = text;
+            } catch { /* ignore — greeting function may require call context */ }
+        }
 
         // Server-side LLM: if model is set, send it + prompt + tools to server.
         // Both GPTAgent (always) and Agent (when model is set) use server-side LLM.
@@ -220,7 +229,7 @@ export class Agent {
     /** Connect and start listening. */
     async start(): Promise<void> {
         // Apply agent-level config now — subclass fields are fully initialized at this point.
-        const agentCfg = this._buildAgentConfig();
+        const agentCfg = await this._buildAgentConfig();
         if (Object.keys(agentCfg).length > 0) {
             this._core.configure(agentCfg);
         }
