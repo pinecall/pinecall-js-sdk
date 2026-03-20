@@ -241,6 +241,8 @@ export function attachEvents(
     });
 
     agent.on("bot.interrupted", (e: any, _call: Call) => {
+        // Skip spurious interruptions with 0 words (happens after tool execution)
+        if (!e.words_spoken) return;
         if (botMsgId) {
             write(` ${WARN("[interrupted]")}\n`);
             botMsgId = "";
