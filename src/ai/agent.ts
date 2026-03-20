@@ -412,11 +412,11 @@ export class Agent {
         this._core.on("reply.rejected", (e, call) => this.onReplyRejected(e, call));
 
         // Server-side tool calling: execute tools locally, send results back
-        this._core.on("llm.tool_call" as any, (event: any, call: Call) => {
+        this._core.on("llm.tool_call" as any, (call: Call, event: any) => {
             if (!this._serverSideLLM && !this.model) return;
 
             // Skip per-tool re-emissions from _executeServerTools (they have {name, args}, not tool_calls)
-            const toolCalls = event.tool_calls as Array<{ id: string; name: string; arguments: string }>;
+            const toolCalls = event?.tool_calls as Array<{ id: string; name: string; arguments: string }>;
             if (!toolCalls) return;
 
             const msgId = event.msg_id as string;

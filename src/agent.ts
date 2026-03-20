@@ -395,7 +395,7 @@ export class Agent extends TypedEmitter<AgentEvents> {
                         // Emit llm.* events on agent too — they aren't proxied
                         // from Call (unlike user.message, bot.speaking, etc.)
                         if (eventType.startsWith("llm.")) {
-                            this.emit(eventType as any, data, call);
+                            this.emit(eventType as any, call, data);
                         }
                     }
                 }
