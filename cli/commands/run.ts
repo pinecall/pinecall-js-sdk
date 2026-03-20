@@ -10,12 +10,13 @@
  */
 
 import { resolveEnv, requireOpenAI } from "../lib/env.js";
+import { importModule } from "../lib/import.js";
 import { parseArgs } from "../lib/args.js";
 import { pickPhone } from "../lib/phone-picker.js";
 import { CliError } from "../lib/errors.js";
 import { attachEvents, attachLLMEvents } from "../ui/events.js";
 import { printHeader, logLine, ensureCursor, writeln } from "../ui/renderer.js";
-import { ACCENT, DIM, MUTED, OK } from "../ui/theme.js";
+import { ACCENT, DIM, ERR, MUTED, OK } from "../ui/theme.js";
 import { startInput } from "../ui/input.js";
 
 // ── File resolution ──────────────────────────────────────────────────────
@@ -77,7 +78,7 @@ async function loadAgentClass(fullPath: string): Promise<{ AgentClass: any; name
 
     let AgentClass: any;
     try {
-        const mod = await import(fullPath);
+        const mod = await importModule(fullPath);
         AgentClass = mod.default ?? mod;
     } catch (err) {
         throw new CliError(`Failed to load agent file: ${fullPath}\n${err}`);
@@ -137,7 +138,7 @@ async function runSingle(
     let AgentClass: any;
     let name: string;
     try {
-        const mod = await import(fullPath);
+        const mod = await importModule(fullPath);
         const exported = mod.default ?? mod;
         if (typeof exported === "function") {
             AgentClass = exported;
@@ -175,10 +176,16 @@ async function runSingle(
     if (agent.voice) logLine(`${DIM("Voice")}  ${agent.voice}`);
     if (agent.language) logLine(`${DIM("Lang")}   ${agent.language}`);
 
-    await agent.start();
-
+    // Attach UI events BEFORE start() so early channel.added events are displayed
     attachEvents(agent.core);
     attachLLMEvents(agent.core);
+
+    // Show server errors (PHONE_IN_USE, etc.) in the TUI
+    agent.pinecall.on("error", (err: any) => {
+        logLine(`${ERR("✗")} ${err.message} ${DIM(`[${err.code}]`)}`);
+    });
+
+    await agent.start();
 
     startInput({ agent: agent.core, pc: agent.pinecall, sourceAgent: agent });
     ensureCursor();

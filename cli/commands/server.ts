@@ -9,6 +9,7 @@
  */
 
 import { resolveEnv, requireOpenAI } from "../lib/env.js";
+import { importModule } from "../lib/import.js";
 import { parseArgs } from "../lib/args.js";
 import { CliError } from "../lib/errors.js";
 import chalk from "chalk";
@@ -80,7 +81,7 @@ async function loadAgentClass(fullPath: string): Promise<{ AgentClass: any; name
     const path = await import("node:path");
     let AgentClass: any;
     try {
-        const mod = await import(fullPath);
+        const mod = await importModule(fullPath);
         AgentClass = mod.default ?? mod;
     } catch (err) {
         throw new CliError(`Failed to load agent file: ${fullPath}\n${err}`);

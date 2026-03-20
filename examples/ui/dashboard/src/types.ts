@@ -14,7 +14,10 @@ export interface Message {
   words?: string[];
   messageId?: string;
   turnId?: string;
-  type?: 'call_control' | 'call_error';
+  type?: 'call_control' | 'call_error' | 'tool_call' | 'tool_result';
+  toolName?: string;
+  toolArgs?: string;
+  toolResult?: string;
 }
 
 /** Event log entry */

@@ -377,7 +377,19 @@ export class Agent extends TypedEmitter<AgentEvents> {
                 // Route to call
                 const callId = data.call_id as string;
                 if (callId) {
-                    const call = this._calls.get(callId);
+                    let call = this._calls.get(callId);
+
+                    // Auto-create call for server-side LLM events (WebRTC sessions
+                    // don't send call.started via WebSocket, so _calls may be empty)
+                    if (!call && eventType.startsWith("llm.")) {
+                        call = new Call(
+                            { call_id: callId, from: "", to: "", direction: "inbound" },
+                            (msg: Record<string, unknown>) => this._send({ ...msg, agent_id: this.id }),
+                        );
+                        this._calls.set(callId, call);
+                        this._proxyCallEvents(call);
+                    }
+
                     if (call) {
                         call._handleEvent(data);
                         // Emit llm.* events on agent too — they aren't proxied

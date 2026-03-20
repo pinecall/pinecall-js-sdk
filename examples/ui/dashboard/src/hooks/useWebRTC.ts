@@ -348,6 +348,29 @@ export function useWebRTC(): WebRTCState {
           );
         }
         break;
+
+      case 'llm.tool_call': {
+        const toolCalls = data.tool_calls ?? [];
+        for (const tc of toolCalls) {
+          let argsStr = '{}';
+          try { argsStr = JSON.stringify(JSON.parse(tc.arguments)); } catch { argsStr = tc.arguments || '{}'; }
+          addMessage({
+            id: Date.now() + Math.random(), role: 'system', type: 'tool_call',
+            text: `🔧 ${tc.name}(${argsStr})`,
+            toolName: tc.name, toolArgs: argsStr,
+          });
+        }
+        break;
+      }
+      case 'llm.tool_result': {
+        const result = typeof data.result === 'string' ? data.result : JSON.stringify(data.result ?? '');
+        const preview = result.length > 150 ? result.slice(0, 150) + '…' : result;
+        addMessage({
+          id: Date.now() + Math.random(), role: 'system', type: 'tool_result',
+          text: `✓ ${preview}`, toolResult: preview,
+        });
+        break;
+      }
     }
   }, [addMessage]);
 

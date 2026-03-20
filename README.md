@@ -46,6 +46,7 @@ npm install @pinecall/sdk
   - [Methods](#methods-1)
   - [Properties](#properties-1)
   - [Events](#events-1)
+  - [Tool Events via Data Channel](#tool-events-via-data-channel)
   - [Data Channel Commands](#data-channel-commands)
 - [Runtime Configuration](#runtime-configuration)
 - [Configuration Reference](#configuration-reference)
@@ -1334,8 +1335,58 @@ await webrtc.connect();
 | `bot.word` | `{ message_id, word, word_index }` | Word-level TTS sync |
 | `bot.finished` | `{ message_id, duration_ms }` | Bot finished speaking |
 | `bot.interrupted` | `{ message_id }` | Bot was interrupted |
+| `llm.tool_call` | `{ call_id, msg_id, tool_calls }` | LLM invoked a tool (server-side LLM) |
+| `llm.tool_result` | `{ call_id, tool_call_id, result }` | Tool execution result returned |
 | `audio.metrics` | `{ source, energy_db, rms, peak, is_speech, vad_prob }` | Audio analytics |
 | `config.updated` | `{ config }` | Server config changed |
+
+#### Tool Events via Data Channel
+
+When using **server-side LLM** (`model` is set on the agent), the data channel streams tool execution events to the browser in real-time:
+
+```typescript
+const webrtc = new PinecallWebRTC("my-agent");
+
+// LLM invoked a tool
+webrtc.on("llm.tool_call", (data) => {
+  for (const tc of data.tool_calls) {
+    console.log(`🔧 ${tc.name}(${tc.arguments})`);
+  }
+});
+
+// Tool result returned
+webrtc.on("llm.tool_result", (data) => {
+  console.log(`✓ ${data.result}`);
+});
+
+await webrtc.connect();
+```
+
+**`llm.tool_call` payload:**
+
+```json
+{
+  "event": "llm.tool_call",
+  "call_id": "session-uuid",
+  "msg_id": "msg_abc123",
+  "tool_calls": [
+    { "id": "call_xyz", "name": "searchUnits", "arguments": "{\"bedrooms\":2}" }
+  ]
+}
+```
+
+**`llm.tool_result` payload:**
+
+```json
+{
+  "event": "llm.tool_result",
+  "call_id": "session-uuid",
+  "tool_call_id": "call_xyz",
+  "result": "{\"found\":true,\"count\":1,\"units\":[...]}"
+}
+```
+
+The built-in WebRTC test page (`/webrtc` command in `pinecall run`) displays these events inline in the chat UI with purple-accented tool calls and green-tinted results.
 
 ### Data Channel Commands
 

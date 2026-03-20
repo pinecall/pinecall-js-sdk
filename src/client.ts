@@ -579,18 +579,9 @@ export class Pinecall extends TypedEmitter<PinecallEvents> {
 
             // ── All other call-scoped events → route to agent ───────────
             default: {
-                // Debug: log tool call routing
-                if (eventType === "llm.tool_call") {
-                    console.log(`[Pinecall] 📨 llm.tool_call received, agent_id=${agentId}, agents=[${[...this._agents.keys()].join(",")}]`);
-                }
                 if (agentId) {
                     const agent = this._agents.get(agentId);
                     if (agent) agent._handleEvent(data);
-                    else if (eventType === "llm.tool_call") {
-                        console.error(`[Pinecall] ❌ No agent found for agent_id=${agentId}`);
-                    }
-                } else if (eventType === "llm.tool_call") {
-                    console.error(`[Pinecall] ❌ llm.tool_call has no agent_id — event dropped!`);
                 }
                 break;
             }

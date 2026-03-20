@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pinecall — __AGENT_ID__</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'], mono: ['JetBrains Mono', 'Fira Code', 'monospace'] },
+      colors: { zinc: { 925: '#111113' } },
+    }
+  }
+}
+</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>/* __STYLES__ */</style>
+</head>
+<body class="bg-zinc-950 text-zinc-100 h-screen flex flex-col overflow-hidden antialiased">
+
+  <!-- ── Header ──────────────────────────────────────────── -->
+  <header class="flex items-center justify-between px-5 h-12 border-b border-zinc-800/80 flex-shrink-0">
+    <div class="flex items-center gap-2.5">
+      <div id="statusDot" class="w-1.5 h-1.5 rounded-full bg-zinc-600 transition-colors duration-300"></div>
+      <span class="text-[13px] font-medium text-zinc-500">pinecall</span>
+      <span class="text-zinc-700 text-xs">/</span>
+      <span class="font-mono text-xs text-zinc-600">__AGENT_ID__</span>
+    </div>
+    <div class="flex items-center gap-2.5">
+      <span id="duration" class="hidden font-mono text-[11px] text-zinc-600 tabular-nums tracking-wide"></span>
+      __LANG_SELECT__
+      <button id="eventsBtn" onclick="toggleEvents()"
+        class="text-[11px] px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-500 hover:text-zinc-400 hover:border-zinc-700 transition-all cursor-pointer">
+        Events <span id="eventCount" class="font-mono text-zinc-700">0</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- ── Main ────────────────────────────────────────────── -->
+  <div class="flex-1 flex overflow-hidden">
+
+    <!-- Chat area -->
+    <main class="flex-1 flex flex-col min-w-0 relative">
+      <div id="chat" class="flex-1 overflow-y-auto px-5 pt-5 pb-28 flex flex-col gap-3 scroll-smooth">
+        <!-- Empty state -->
+        <div id="emptyState" class="flex-1 flex flex-col items-center justify-center gap-4 select-none">
+          <div class="w-11 h-11 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center">
+            <svg class="w-5 h-5 text-zinc-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z"/>
+            </svg>
+          </div>
+          <div class="text-center">
+            <p class="text-[13px] text-zinc-400">Press to start a conversation</p>
+            <p class="font-mono text-[11px] text-zinc-600 mt-1">__AGENT_ID__</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Floating controls -->
+      <div class="absolute bottom-0 inset-x-0 flex flex-col items-center gap-3 pb-5 pt-16 bg-gradient-to-t from-zinc-950 from-60% to-transparent pointer-events-none">
+        <div class="flex items-center gap-3 pointer-events-auto">
+          <button id="muteBtn" onclick="doMute()"
+            class="hidden w-10 h-10 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-400 text-base hover:border-zinc-700 hover:text-zinc-300 transition-all cursor-pointer">
+            🎙
+          </button>
+          <div class="relative">
+            <button id="callBtn" onclick="toggleCall()"
+              class="relative z-10 w-[52px] h-[52px] rounded-2xl bg-emerald-600 text-white flex items-center justify-center shadow-lg shadow-emerald-600/10 hover:bg-emerald-500 hover:shadow-emerald-500/20 active:scale-95 transition-all cursor-pointer">
+              <svg class="w-[22px] h-[22px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z"/>
+              </svg>
+            </button>
+            <div id="callRing" class="hidden absolute -inset-1 rounded-[20px] border-2 border-emerald-500 animate-ripple"></div>
+          </div>
+        </div>
+        <span id="statusPill" class="font-mono text-[11px] text-zinc-600 pointer-events-auto">Ready</span>
+      </div>
+    </main>
+
+    <!-- Events sidebar -->
+    <aside id="eventsPanel" class="hidden w-80 border-l border-zinc-800/80 bg-zinc-925 flex-col flex-shrink-0">
+      <div class="flex items-center justify-between px-4 py-2.5 border-b border-zinc-800/80">
+        <span class="font-mono text-[10px] uppercase tracking-[1.5px] text-zinc-600">Events</span>
+        <button onclick="clearEvents()" class="text-[11px] text-zinc-600 hover:text-zinc-400 bg-transparent cursor-pointer transition-colors">Clear</button>
+      </div>
+      <div id="eventsList" class="flex-1 overflow-y-auto"></div>
+    </aside>
+  </div>
+
+<script src="/pinecall-webrtc.js"></script>
+<script>/* __SCRIPT__ */</script>
+</body>
+</html>

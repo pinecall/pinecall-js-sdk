@@ -5,11 +5,16 @@
  * Supports an optional `log` callback and `selectedCall` for TUI integration.
  */
 
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Agent, Call, Pinecall } from "@pinecall/sdk";
 import { fetchVoices } from "@pinecall/sdk";
 import { MUTED, OK, WARN, ERR, DIM, ACCENT } from "./theme.js";
 import { logLine, writeln } from "./renderer.js";
 import { getActiveCalls, getSelectedCall, selectCall, getCallLabel } from "./events.js";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -499,33 +504,40 @@ async function handleWebRTC(ctx: CommandContext, args: string[]): Promise<void> 
     const { exec } = await import("node:child_process");
 
     // Extract language presets from agent channels
-    // Build phone language presets first, then prepend "default" so it's selected initially
+    // If no explicit WebRTC channel, use the first phone channel's config as default for WebRTC
     const phoneLangs: Record<string, Record<string, unknown>> = {};
     const agentAny = (ctx.sourceAgent || ctx.agent) as any;
     const allCh = [...(agentAny.channels || []), ...(agentAny.phone ? [agentAny.phone] : [])];
+    let firstPhoneConfig: Record<string, unknown> | null = null;
     for (const ch of allCh) {
-        if (ch?.type === "phone" && ch.language) {
-            const lang = ch.language;
-            if (!phoneLangs[lang]) {
-                const p: Record<string, unknown> = { label: lang.toUpperCase(), language: lang };
+        if (ch?.type === "phone") {
+            // Capture first phone's full config as default for WebRTC
+            if (!firstPhoneConfig) {
+                firstPhoneConfig = {};
+                if (ch.language) firstPhoneConfig.language = ch.language;
+                if (ch.voice) firstPhoneConfig.voice = ch.voice;
+                if (ch.stt) firstPhoneConfig.stt = ch.stt;
+                if (ch.turnDetection) firstPhoneConfig.turnDetection = ch.turnDetection;
+                if (typeof ch.greeting === "string" && ch.greeting) firstPhoneConfig.greeting = ch.greeting;
+            }
+            if (ch.language && !phoneLangs[ch.language]) {
+                const p: Record<string, unknown> = { label: ch.language.toUpperCase(), language: ch.language };
                 if (ch.voice) p.voice = ch.voice;
                 if (ch.stt) p.stt = ch.stt;
                 if (ch.turnDetection) p.turnDetection = ch.turnDetection;
                 if (typeof ch.greeting === "string" && ch.greeting) p.greeting = ch.greeting;
-                phoneLangs[lang] = p;
+                phoneLangs[ch.language] = p;
             }
         }
     }
-    // "default" first so the <select> starts with EN (WebRTC default)
     const langPresets: Record<string, Record<string, unknown>> = {};
-    if (Object.keys(phoneLangs).length > 0) {
-        const def: Record<string, unknown> = { label: "EN (Default)", language: agentAny.language || "en" };
-        if (agentAny.voice) def.voice = agentAny.voice;
-        langPresets["default"] = def;
+    if (Object.keys(phoneLangs).length > 1) {
+        // Multiple languages — show a selector, first phone config is default
+        langPresets["default"] = { label: "Default", ...(firstPhoneConfig || {}) };
         Object.assign(langPresets, phoneLangs);
     }
 
-    const html = generateWebRTCPage(appId, langPresets);
+    const html = generateWebRTCPage(appId, langPresets, firstPhoneConfig);
 
     // Read the IIFE bundle once
     const { readFileSync, existsSync } = await import("node:fs");
@@ -615,242 +627,26 @@ async function handleWebRTC(ctx: CommandContext, args: string[]): Promise<void> 
     process.on("exit", () => { server.close(); });
 }
 
-function generateWebRTCPage(appId: string, langPresets: Record<string, Record<string, unknown>> = {}): string {
+function generateWebRTCPage(appId: string, langPresets: Record<string, Record<string, unknown>> = {}, defaultConfig: Record<string, unknown> | null = null): string {
     const hasLangs = Object.keys(langPresets).length > 1;
-    const langsJSON = JSON.stringify(langPresets);
-    return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pinecall WebRTC — ${appId}</title>
-<script src="https://cdn.tailwindcss.com"><\/script>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
-<style>
-  body { font-family: 'Inter', sans-serif; }
-  .scrollbar-thin { scrollbar-width: thin; scrollbar-color: rgba(80,80,120,0.3) transparent; }
-  .scrollbar-thin::-webkit-scrollbar { width: 4px; }
-  .scrollbar-thin::-webkit-scrollbar-thumb { background: rgba(80,80,120,0.3); border-radius: 2px; }
-  @keyframes fade-up { from { opacity:0; transform:translateY(6px) } to { opacity:1; transform:translateY(0) } }
-  @keyframes pulse-ring { 0% { transform:scale(1); opacity:0.5 } 100% { transform:scale(2.2); opacity:0 } }
-  .animate-fade-up { animation: fade-up 0.25s ease-out; }
-  .glass { background: rgba(255,255,255,0.03); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.06); }
-</style>
-</head>
-<body class="bg-[#0b0b18] text-white min-h-screen flex flex-col">
-  <header class="flex items-center justify-between px-8 py-5">
-    <div class="flex items-center gap-3">
-      <div class="w-2 h-2 rounded-full bg-emerald-400"></div>
-      <span class="text-sm text-gray-400 tracking-wide">Pinecall WebRTC</span>
-    </div>
-    <div class="flex items-center gap-4">
-      <span id="duration" class="text-xs font-mono text-gray-500 hidden tabular-nums">0:00</span>
-      <button id="eventsToggle" onclick="toggleEvents()"
-        class="text-xs px-3 py-1.5 rounded-lg glass text-gray-400 hover:text-white transition cursor-pointer">
-        Events <span id="eventCount" class="text-gray-600">(0)</span>
-      </button>
-    </div>
-  </header>
-  <div class="flex-1 flex overflow-hidden">
-    <div class="flex-1 flex flex-col px-8 pb-6">
-      <div id="waveformContainer" class="mb-4 hidden">
-        <div class="glass rounded-xl px-5 py-3">
-          <div class="flex items-center justify-between mb-2">
-            <span class="text-[10px] uppercase tracking-widest text-gray-500">Audio</span>
-            <span id="waveLabel" class="text-[10px] tracking-wide text-gray-600 transition-colors">Idle</span>
-          </div>
-          <canvas id="waveCanvas" class="w-full rounded" style="height:44px"></canvas>
-        </div>
-      </div>
-      <div id="chat" class="flex-1 overflow-y-auto space-y-4 scrollbar-thin pr-2">
-        <div id="emptyState" class="flex flex-col items-center justify-center h-full gap-6">
-          <div class="w-16 h-16 rounded-2xl glass flex items-center justify-center">
-            <svg class="w-7 h-7 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" />
-            </svg>
-          </div>
-          <div class="text-center">
-            <p class="text-gray-400 text-sm">Press to start a conversation</p>
-            <p class="text-gray-600 text-xs mt-1">Agent: <span class="text-gray-500">${appId}</span></p>
-          </div>
-        </div>
-      </div>
-      <div class="flex items-center justify-center gap-4 pt-6">${hasLangs ? `
-        <select id="langSelect" onchange="switchLang(this.value)" class="text-xs py-2 px-3 rounded-lg glass text-gray-300 cursor-pointer outline-none" style="min-width:90px">
-          ${Object.entries(langPresets).map(([k, v]) => `<option value="${k}" style="background:#0b0b18">${(v.label as string) || k}</option>`).join('')}
-        </select>` : ''}
-        <button id="muteBtn" onclick="doMute()" class="hidden w-12 h-12 rounded-full glass text-lg hover:bg-white/5 transition cursor-pointer">🎙️</button>
-        <div class="relative">
-          <button id="callBtn" onclick="toggleCall()"
-            class="relative z-10 w-16 h-16 rounded-full bg-emerald-500 text-white text-xl shadow-lg shadow-emerald-500/20 hover:bg-emerald-400 hover:scale-105 active:scale-95 transition-all cursor-pointer flex items-center justify-center">
-            <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" />
-            </svg>
-          </button>
-          <div id="callRing" class="hidden absolute inset-0 rounded-full border-2 border-emerald-400" style="animation: pulse-ring 1.5s ease-out infinite"></div>
-        </div>
-      </div>
-      <p id="status" class="text-center text-[11px] text-gray-600 mt-3">Ready</p>
-    </div>
-    <aside id="eventsPanel" class="hidden w-80 border-l border-white/5 flex flex-col bg-[#0d0d1a]">
-      <div class="flex items-center justify-between px-5 py-4 border-b border-white/5">
-        <span class="text-[10px] uppercase tracking-widest text-gray-500">Data Channel Events</span>
-        <button onclick="clearEvents()" class="text-gray-600 hover:text-gray-400 text-xs cursor-pointer">Clear</button>
-      </div>
-      <div id="eventsList" class="flex-1 overflow-y-auto scrollbar-thin"></div>
-    </aside>
-  </div>
 
-<script src="/pinecall-webrtc.js"><\/script>
-<script>
-const AGENT_ID = "${appId}";
-const { PinecallWebRTC } = Pinecall;
-let webrtc = null, events = [], durationTimer = null, callStart = 0, botMessages = {};
-const LANG_PRESETS = ${langsJSON};
-let selectedConfig = null; // Pre-call language config
-function switchLang(key) {
-  const p = LANG_PRESETS[key]; if (!p) return;
-  const cfg = {};
-  if (p.voice) cfg.voice = p.voice;
-  if (p.stt) cfg.stt = p.stt;
-  if (p.language) cfg.language = p.language;
-  if (p.turnDetection) cfg.turnDetection = p.turnDetection;
-  if (p.greeting) cfg.greeting = p.greeting;
-  if (webrtc) {
-    // Mid-call: send configure action
-    if (Object.keys(cfg).length > 0) {
-      webrtc.send({ action: 'configure', ...cfg });
-      addMsg('system', 'Language → ' + (p.label || key));
-      addEvent({event:'configure', ...cfg});
-    }
-  } else {
-    // Pre-call: store for next connect
-    selectedConfig = (key === 'default') ? null : cfg;
-    status.textContent = 'Ready — ' + (p.label || key);
-  }
-}
-let audioCtx = null, waveAnimFrame = null;
-let userAnalyser = null, agentAnalyser = null;
-let userHistory = new Array(80).fill(0), agentHistory = new Array(80).fill(0);
+    const dir = join(__dirname, "..", "cli", "ui", "webrtc");
 
-const micSVG = '<svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" /></svg>';
-const xSVG = '<svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>';
-const greenBtn = 'relative z-10 w-16 h-16 rounded-full bg-emerald-500 text-white text-xl shadow-lg shadow-emerald-500/20 hover:bg-emerald-400 hover:scale-105 active:scale-95 transition-all cursor-pointer flex items-center justify-center';
-const redBtn = 'relative z-10 w-16 h-16 rounded-full bg-red-500 text-white text-xl shadow-lg shadow-red-500/20 hover:bg-red-400 hover:scale-105 active:scale-95 transition-all cursor-pointer flex items-center justify-center';
+    const html = readFileSync(join(dir, "page.html"), "utf-8");
+    const css = readFileSync(join(dir, "style.css"), "utf-8");
+    const js = readFileSync(join(dir, "script.js"), "utf-8");
 
-function startWaveform(local, remote) {
-  audioCtx = new AudioContext();
-  if (local) { const s = audioCtx.createMediaStreamSource(local); userAnalyser = audioCtx.createAnalyser(); userAnalyser.fftSize=256; s.connect(userAnalyser); }
-  if (remote) { const s = audioCtx.createMediaStreamSource(remote); agentAnalyser = audioCtx.createAnalyser(); agentAnalyser.fftSize=256; s.connect(agentAnalyser); }
-  waveformContainer.classList.remove('hidden');
-  drawWave();
-}
-function addRemoteStream(rs) {
-  if (!audioCtx || !rs) return;
-  try { const s = audioCtx.createMediaStreamSource(rs); agentAnalyser = audioCtx.createAnalyser(); agentAnalyser.fftSize=256; s.connect(agentAnalyser); } catch {}
-}
-function stopWaveform() {
-  if (waveAnimFrame) cancelAnimationFrame(waveAnimFrame);
-  if (audioCtx) { audioCtx.close(); audioCtx = null; }
-  userAnalyser = agentAnalyser = null;
-  userHistory = new Array(80).fill(0); agentHistory = new Array(80).fill(0);
-  waveformContainer.classList.add('hidden');
-}
-function getRms(a) { if (!a) return 0; const d = new Uint8Array(a.frequencyBinCount); a.getByteTimeDomainData(d); let s=0; for (let i=0;i<d.length;i++){const v=(d[i]-128)/128;s+=v*v;} return Math.sqrt(s/d.length); }
-function drawWave() {
-  const c = waveCanvas, ctx = c.getContext('2d'), dpr = devicePixelRatio||1, w = c.clientWidth, h = c.clientHeight;
-  c.width=w*dpr; c.height=h*dpr; ctx.scale(dpr,dpr); ctx.clearRect(0,0,w,h);
-  const uR=getRms(userAnalyser), aR=getRms(agentAnalyser);
-  userHistory.push(Math.min(1,uR*5)); agentHistory.push(Math.min(1,aR*5));
-  if(userHistory.length>80) userHistory.shift(); if(agentHistory.length>80) agentHistory.shift();
-  if(uR>0.02){waveLabel.textContent='You';waveLabel.style.color='#4ade80';}
-  else if(aR>0.01){waveLabel.textContent='Agent';waveLabel.style.color='#a78bfa';}
-  else{waveLabel.textContent='Listening';waveLabel.style.color='#6b7280';}
-  const mid=h/2,bW=2.5,gap=1.5,total=Math.min(80,Math.floor(w/(bW+gap))),sx=(w-total*(bW+gap)+gap)/2;
-  for(let i=0;i<total;i++){
-    const idx=80-total+i, uI=userHistory[idx]||0, aI=agentHistory[idx]||0, intensity=Math.max(uI,aI), isA=aI>uI;
-    const bH=Math.max(1,intensity*h*0.4);
-    if(intensity>0.01){const g=ctx.createLinearGradient(0,mid-bH,0,mid+bH);
-      if(isA){g.addColorStop(0,'rgba(167,139,250,0.05)');g.addColorStop(0.5,'rgba(167,139,250,'+(0.3+intensity*0.7)+')');g.addColorStop(1,'rgba(167,139,250,0.05)');}
-      else{g.addColorStop(0,'rgba(74,222,128,0.05)');g.addColorStop(0.5,'rgba(74,222,128,'+(0.3+intensity*0.7)+')');g.addColorStop(1,'rgba(74,222,128,0.05)');}
-      ctx.fillStyle=g;
-    }else{ctx.fillStyle='rgba(255,255,255,0.03)';}
-    ctx.beginPath();ctx.roundRect(sx+i*(bW+gap),mid-bH,bW,bH*2,1);ctx.fill();
-  }
-  waveAnimFrame = requestAnimationFrame(drawWave);
-}
+    const langSelect = hasLangs
+        ? `<select id="langSelect" onchange="switchLang(this.value)" class="font-mono text-[11px] py-1 px-2 rounded-md bg-zinc-900 border border-zinc-800 text-zinc-500 outline-none cursor-pointer">${Object.entries(langPresets).map(([k, v]) => `<option value="${k}">${(v as any).label || k}</option>`).join("")}</select>`
+        : "";
 
-function addMsg(role, text, opts={}) {
-  const e = document.getElementById('emptyState'); if(e) e.remove();
-  const d = document.createElement('div');
-  d.className = (role==='user'?'flex justify-end':role==='system'?'flex justify-center':'flex justify-start')+' animate-fade-up';
-  const b = document.createElement('div');
-  if(role==='system') b.className='px-4 py-2 rounded-full glass text-xs text-gray-400';
-  else if(role==='user') b.className='max-w-[75%] px-4 py-3 rounded-2xl text-sm leading-relaxed '+(opts.interim?'glass opacity-50':'bg-emerald-500/10 border border-emerald-500/15 text-emerald-100');
-  else b.className='max-w-[75%] px-4 py-3 rounded-2xl glass text-sm text-gray-200 leading-relaxed';
-  b.textContent=text; if(opts.id) b.id=opts.id;
-  d.appendChild(b); chat.appendChild(d); chat.scrollTop=chat.scrollHeight; return b;
-}
-function updateMsg(id, text, opts={}) {
-  const el = document.getElementById(id); if(!el) return;
-  if(text) el.textContent=text;
-  if(opts.interrupted){el.classList.add('opacity-30');el.style.textDecoration='line-through';}
-  if(opts.done) el.classList.remove('animate-pulse');
-}
-
-function addEvent(evt) {
-  events.push(evt); eventCount.textContent='('+events.length+')';
-  const el = document.createElement('div');
-  el.className='px-5 py-3 border-b border-white/[.03] cursor-pointer hover:bg-white/[.02] transition';
-  const dot = evt.event?.startsWith('user')?'#4ade80':evt.event?.startsWith('bot')?'#a78bfa':'#60a5fa';
-  el.innerHTML='<div class="flex items-center gap-2"><div class="w-1.5 h-1.5 rounded-full flex-shrink-0" style="background:'+dot+'"></div><span class="text-xs font-mono text-gray-400 truncate">'+evt.event+'</span></div>';
-  el.onclick=()=>{const p=el.querySelector('pre');if(p){p.remove();return;}const pr=document.createElement('pre');pr.className='mt-2 text-[10px] p-3 rounded-lg bg-black/30 text-gray-500 overflow-auto max-h-40';pr.style.whiteSpace='pre-wrap';pr.style.wordBreak='break-all';pr.textContent=JSON.stringify(evt,null,2);el.appendChild(pr);};
-  eventsList.appendChild(el); eventsList.scrollTop=eventsList.scrollHeight;
-}
-function clearEvents(){events=[];eventsList.innerHTML='';eventCount.textContent='(0)';}
-function toggleEvents(){eventsPanel.classList.toggle('hidden');eventsPanel.classList.toggle('flex');}
-
-function startDuration(){callStart=Date.now();duration.classList.remove('hidden');durationTimer=setInterval(()=>{const s=Math.floor((Date.now()-callStart)/1000);duration.textContent=Math.floor(s/60)+':'+(s%60).toString().padStart(2,'0');},1000);}
-function stopDuration(){if(durationTimer){clearInterval(durationTimer);durationTimer=null;}}
-function doMute(){if(!webrtc)return;webrtc.toggleMute();muteBtn.textContent=webrtc.isMuted?'🔇':'🎙️';}
-
-async function toggleCall() {
-  if (webrtc) {
-    webrtc.disconnect(); webrtc=null; stopDuration(); stopWaveform();
-    callBtn.innerHTML=micSVG; callBtn.className=greenBtn; callRing.classList.add('hidden');
-    muteBtn.classList.add('hidden'); status.textContent='Disconnected'; return;
-  }
-  status.textContent='Connecting…'; callRing.classList.remove('hidden'); botMessages={};
-  try {
-    const opts = selectedConfig ? { config: selectedConfig } : {};
-    webrtc = new PinecallWebRTC(AGENT_ID, opts);
-    webrtc.on('connected', () => {
-      status.textContent='Connected'; callBtn.innerHTML=xSVG; callBtn.className=redBtn;
-      callRing.classList.add('hidden'); muteBtn.classList.remove('hidden');
-      chat.innerHTML=''; addMsg('system','Connected — start talking'); startDuration();
-      if(webrtc.localStream) startWaveform(webrtc.localStream, webrtc.remoteStream);
-      if(!webrtc.remoteStream){const ck=setInterval(()=>{if(!webrtc){clearInterval(ck);return;}if(webrtc.remoteStream){addRemoteStream(webrtc.remoteStream);clearInterval(ck);}},200);}
-    });
-    webrtc.on('disconnected', () => {
-      status.textContent='Disconnected'; stopDuration(); stopWaveform();
-      callBtn.innerHTML=micSVG; callBtn.className=greenBtn; callRing.classList.add('hidden');
-      muteBtn.classList.add('hidden'); webrtc=null;
-    });
-    webrtc.on('session.started',(d)=>{addMsg('system','Session started');addEvent({event:'session.started',...d});});
-    let interimEl = null;
-    webrtc.on('user.speaking',(d)=>{if(!interimEl)interimEl=addMsg('user',d.text,{interim:true});else interimEl.textContent=d.text;addEvent({event:'user.speaking',text:d.text});});
-    webrtc.on('user.message',(d)=>{if(interimEl){interimEl.textContent=d.text;interimEl.className='max-w-[75%] px-4 py-3 rounded-2xl text-sm leading-relaxed bg-emerald-500/10 border border-emerald-500/15 text-emerald-100';interimEl=null;}else addMsg('user',d.text);addEvent({event:'user.message',text:d.text});});
-    webrtc.on('bot.speaking',(d)=>{const id='bot-'+d.message_id;const el=addMsg('bot',d.text||'…',{id});el.classList.add('animate-pulse');botMessages[d.message_id]={words:[],el:id};addEvent({event:'bot.speaking',message_id:d.message_id});});
-    webrtc.on('bot.word',(d)=>{const e=botMessages[d.message_id];if(e){e.words[d.word_index??e.words.length]=d.word;updateMsg(e.el,e.words.filter(Boolean).join(' '));}});
-    webrtc.on('bot.finished',(d)=>{const e=botMessages[d.message_id];if(e){if(d.text)updateMsg(e.el,d.text);updateMsg(e.el,null,{done:true});}addEvent({event:'bot.finished',message_id:d.message_id});});
-    webrtc.on('bot.interrupted',(d)=>{const e=botMessages[d.message_id];if(e)updateMsg(e.el,null,{interrupted:true,done:true});addEvent({event:'bot.interrupted',message_id:d.message_id});});
-    webrtc.on('turn.end',(d)=>addEvent({event:'turn.end',...d}));
-    await webrtc.connect();
-  } catch(e) { status.textContent='Error: '+e.message; callRing.classList.add('hidden'); webrtc=null; }
-}
-<\/script>
-</body>
-</html>`;
+    return html
+        .replace("/* __STYLES__ */", css)
+        .replace("/* __SCRIPT__ */", js)
+        .replace(/__AGENT_ID__/g, appId)
+        .replace("__LANG_PRESETS__", JSON.stringify(langPresets))
+        .replace("__DEFAULT_CONFIG__", JSON.stringify(defaultConfig))
+        .replace("__LANG_SELECT__", langSelect);
 }
 
 

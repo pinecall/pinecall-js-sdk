@@ -48,6 +48,8 @@ export interface SocketState {
   viewingHistoryId: string | null;
   /** Save WebRTC call to history (called from App when WebRTC ends) */
   saveWebRTCToHistory: (msgs: Message[], duration: number) => void;
+  /** Force-reset call state after a REST hangup succeeds */
+  forceEndCall: () => void;
 }
 
 export function useSocket(): SocketState {
@@ -97,6 +99,16 @@ export function useSocket(): SocketState {
 
   const clearMessages = useCallback(() => setMessages([]), []);
   const clearEvents = useCallback(() => setEventLog([]), []);
+
+  /** Force-reset call state (used after REST hangup succeeds, in case WS event is delayed). */
+  const forceEndCall = useCallback(() => {
+    setCallStatus('idle');
+    if (durationRef.current) { clearInterval(durationRef.current); durationRef.current = null; }
+    setDuration(0);
+    setSessionIdBoth(null);
+    setSessionTypeBoth(null);
+    setSessionFromBoth(null);
+  }, [setSessionIdBoth, setSessionTypeBoth, setSessionFromBoth]);
 
   const viewHistoryCall = useCallback((callId: string | null) => {
     setViewingHistoryId(callId);
@@ -414,6 +426,29 @@ export function useSocket(): SocketState {
           text: `❌ Error: ${data.error}${data.code ? ` (${data.code})` : ''}`,
         }]);
         break;
+      // ─── LLM Tool events ──────────────────────────────────────────────
+      case 'llm.tool_call': {
+        const toolCalls = data.tool_calls ?? [];
+        for (const tc of toolCalls) {
+          let argsStr = '{}';
+          try { argsStr = JSON.stringify(JSON.parse(tc.arguments)); } catch { argsStr = tc.arguments || '{}'; }
+          setMessages(prev => [...prev, {
+            id: Date.now() + Math.random(), role: 'system', type: 'tool_call',
+            text: `🔧 ${tc.name}(${argsStr})`,
+            toolName: tc.name, toolArgs: argsStr,
+          }]);
+        }
+        break;
+      }
+      case 'llm.tool_result': {
+        const result = typeof data.result === 'string' ? data.result : JSON.stringify(data.result ?? '');
+        const preview = result.length > 150 ? result.slice(0, 150) + '…' : result;
+        setMessages(prev => [...prev, {
+          id: Date.now() + Math.random(), role: 'system', type: 'tool_result',
+          text: `✓ ${preview}`, toolResult: preview,
+        }]);
+        break;
+      }
 
       default: break;
     }
@@ -449,6 +484,6 @@ export function useSocket(): SocketState {
     sessionId, sessionFrom, sessionType, duration,
     userMetrics, botMetrics, activePhones, hasWebRTC, languages, callHistory,
     send, clearMessages, clearEvents, viewHistoryCall, viewingHistoryId,
-    saveWebRTCToHistory,
+    saveWebRTCToHistory, forceEndCall,
   };
 }

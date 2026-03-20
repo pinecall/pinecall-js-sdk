@@ -1,0 +1,91 @@
+/* ── WebRTC Page Styles ──────────────────────────────────── */
+
+::-webkit-scrollbar { width: 3px; }
+::-webkit-scrollbar-thumb { background: rgb(39 39 42); border-radius: 2px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(3px) }
+  to   { opacity: 1; transform: translateY(0) }
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1 }
+  50%      { opacity: .4 }
+}
+@keyframes ripple {
+  0%   { transform: scale(1);   opacity: .4 }
+  100% { transform: scale(2.2); opacity: 0 }
+}
+
+.fade-in     { animation: fadeIn .2s ease-out }
+.pulse       { animation: pulse 1.5s ease-in-out infinite }
+.animate-ripple { animation: ripple 1.5s ease-out infinite }
+
+/* Message bubbles */
+.msg-user {
+  max-width: 70%;
+  padding: 10px 14px;
+  border-radius: 14px 14px 4px 14px;
+  font-size: 13px;
+  line-height: 1.55;
+  background: rgba(16, 185, 129, 0.06);
+  border: 1px solid rgba(16, 185, 129, 0.12);
+  color: rgb(209, 250, 229);
+}
+.msg-user.interim {
+  background: transparent;
+  border: 1px dashed rgb(63, 63, 70);
+  color: rgb(161, 161, 170);
+  opacity: .6;
+}
+.msg-bot {
+  max-width: 70%;
+  padding: 10px 14px;
+  border-radius: 14px 14px 14px 4px;
+  font-size: 13px;
+  line-height: 1.55;
+  background: rgb(24, 24, 27);
+  border: 1px solid rgb(39, 39, 42);
+  color: rgb(228, 228, 231);
+}
+.msg-system {
+  padding: 5px 12px;
+  border-radius: 6px;
+  font-size: 11px;
+  color: rgb(82, 82, 91);
+  background: rgb(24, 24, 27);
+  border: 1px solid rgb(39, 39, 42);
+}
+.msg-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+  border: 1px solid rgba(139, 92, 246, 0.15);
+  background: rgba(139, 92, 246, 0.04);
+}
+.msg-result {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+  border: 1px solid rgba(16, 185, 129, 0.12);
+  background: rgba(16, 185, 129, 0.03);
+  max-width: 85%;
+  word-break: break-all;
+}
+
+/* Event sidebar items */
+.evt-row {
+  padding: 7px 16px;
+  border-bottom: 1px solid rgb(30, 30, 33);
+  cursor: pointer;
+  transition: background .1s;
+}
+.evt-row:hover { background: rgb(24, 24, 27); }

@@ -26,6 +26,8 @@
  */
 
 import { Pinecall } from "../client.js";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve as pathResolve } from "node:path";
 import {
     Agent as CoreAgent,
     type AgentConfig,
@@ -138,14 +140,14 @@ export class Agent {
             // Auto-load prompt: prompts/{className}.txt → falls back to this.prompt
             let promptText = this.prompt;
             try {
-                const fs = require("fs");
-                const path = require("path");
                 const className = this.constructor.name.toLowerCase();
-                const promptPath = path.resolve("prompts", `${className}.txt`);
-                if (fs.existsSync(promptPath)) {
-                    promptText = fs.readFileSync(promptPath, "utf-8").trim();
+                const promptPath = pathResolve("prompts", `${className}.txt`);
+                if (existsSync(promptPath)) {
+                    promptText = readFileSync(promptPath, "utf-8").trim();
                 }
-            } catch { /* no auto-load */ }
+            } catch (e) {
+                console.error("[Agent] Prompt auto-load failed:", e);
+            }
 
             if (promptText) {
                 (cfg as any).instructions = promptText;
@@ -228,13 +230,13 @@ export class Agent {
         if (this.channels) all.push(...this.channels);
 
         // Auto-add WebRTC channel if none declared (opt-out via webrtc = false)
-        const hasExplicitWebRTC = all.some(ch => ch instanceof WebRTC);
+        const hasExplicitWebRTC = all.some(ch => ch.type === "webrtc");
         if (!hasExplicitWebRTC && this.webrtc !== false) {
-            all.push(this.webrtc instanceof WebRTC ? this.webrtc : new WebRTC());
+            all.push(this.webrtc && typeof this.webrtc === "object" && "type" in this.webrtc ? this.webrtc : new WebRTC());
         }
 
         for (const ch of all) {
-            const ref = ch instanceof Phone ? ch.number : undefined;
+            const ref = ch.type === "phone" ? (ch as any).number : undefined;
             const config = ch.toConfig();
             this._core.addChannel(ch.type, ref, Object.keys(config).length > 0 ? config : undefined);
         }
@@ -343,10 +345,10 @@ export class Agent {
         if (this.phone) all.push(this.phone);
         if (this.channels) all.push(...this.channels);
 
-        const match = all.find(ch => ch instanceof Phone && ch.number && call.to === ch.number) as Phone | undefined;
-        if (match?.greeting) return match.greeting;
+        const match = all.find(ch => ch.type === "phone" && (ch as any).number && call.to === (ch as any).number);
+        if ((match as any)?.greeting) return (match as any).greeting;
 
-        const webrtc = all.find(ch => ch instanceof WebRTC) as WebRTC | undefined;
+        const webrtc = all.find(ch => ch.type === "webrtc");
         if (webrtc?.greeting) return webrtc.greeting;
 
         return undefined;
@@ -411,14 +413,13 @@ export class Agent {
 
         // Server-side tool calling: execute tools locally, send results back
         this._core.on("llm.tool_call" as any, (event: any, call: Call) => {
-            console.log(`[Agent] 📥 llm.tool_call received, _serverSideLLM=${this._serverSideLLM}, call_id=${call?.id}`);
-            if (!this._serverSideLLM) return;
+            if (!this._serverSideLLM && !this.model) return;
+
+            // Skip per-tool re-emissions from _executeServerTools (they have {name, args}, not tool_calls)
+            const toolCalls = event.tool_calls as Array<{ id: string; name: string; arguments: string }>;
+            if (!toolCalls) return;
 
             const msgId = event.msg_id as string;
-            const toolCalls = event.tool_calls as Array<{ id: string; name: string; arguments: string }>;
-
-            console.log(`[Agent] 🔧 Executing ${toolCalls.length} tools: ${toolCalls.map(t => t.name).join(", ")}`);
-            this._core._emit("agent.log" as any, call, `🔧 llm.tool_call tools=${toolCalls.map(t => t.name).join(",")}` as any);
 
             // Execute tools and send results back (fire-and-forget)
             this._executeServerTools(toolCalls, call, msgId).catch((err) => {
@@ -486,34 +487,32 @@ export class Agent {
         call: Call,
         msgId: string,
     ): Promise<void> {
-        console.log(`[Agent] _executeServerTools msg_id=${msgId} tools=${toolCalls.map(t => t.name).join(",")}`);
         const results: Array<{ tool_call_id: string; result: unknown }> = [];
 
         for (const tc of toolCalls) {
             let result: unknown;
+
+            // Emit per-tool event for TUI (using direct emit, handler has recursion guard)
+            (this._core as any).emit("llm.tool_call", call, { name: tc.name, args: tc.arguments });
+
             try {
                 const args = JSON.parse(tc.arguments);
-                console.log(`[Agent] 🔨 Calling tool '${tc.name}' with args:`, JSON.stringify(args));
                 const handler = (this as any)[tc.name];
                 if (typeof handler === "function") {
                     result = await handler.call(this, args, call);
-                    console.log(`[Agent] ✅ Tool '${tc.name}' returned:`, JSON.stringify(result).slice(0, 200));
                 } else {
-                    console.error(`[Agent] ❌ Unknown tool: ${tc.name} — available methods:`, Object.getOwnPropertyNames(Object.getPrototypeOf(this)).filter(m => !m.startsWith('_')));
                     result = { error: `Unknown tool: ${tc.name}` };
                 }
             } catch (err) {
-                console.error(`[Agent] ❌ Tool '${tc.name}' threw:`, err);
                 result = { error: String(err) };
             }
 
-            // Emit tool result event for TUI logging
-            this._core._emit("llm.tool_result" as any, call, { name: tc.name, result } as any);
+            // Emit tool result for TUI logging
+            (this._core as any).emit("llm.tool_result", call, { name: tc.name, result });
 
             results.push({ tool_call_id: tc.id, result });
         }
 
-        console.log(`[Agent] 📤 Sending ${results.length} tool results back to server for msg_id=${msgId}`);
         // Send results back to server
         (this._core as any)._send({
             event: "llm.tool_result",

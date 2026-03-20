@@ -274,7 +274,11 @@ export default function App() {
           <CallControlModal
             sessionId={socket.sessionId}
             send={socket.send}
-            onHangup={() => socket.sessionId && api.hangup(socket.sessionId)}
+            onHangup={async () => {
+              if (!socket.sessionId) return;
+              const r = await api.hangup(socket.sessionId);
+              if (r.ok) socket.forceEndCall();
+            }}
           />
         )}
 
