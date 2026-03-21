@@ -159,7 +159,8 @@ export class Agent {
             }
 
             if (promptText) {
-                // Store template for per-call resolution (NOT sent in agent.create)
+                // Send raw template in agent.create — server resolves {{vars}} per-LLM-request
+                (cfg as any).instructions = promptText;
                 this._resolvedPrompt = promptText;
             }
             const tools = this._getToolDefinitions();
@@ -370,17 +371,6 @@ export class Agent {
             call._promptsDir = "prompts";
             call._promptTemplate = this._resolvedPrompt ?? this.prompt;
 
-            // Send raw prompt template to server for this session
-            // Server resolves {{date}}, {{time}}, {{day}} etc. before EACH LLM request
-            const template = call._promptTemplate;
-            if (template && (this._serverSideLLM || this.model)) {
-                (this._core as any)._send({
-                    event: "agent.configure",
-                    agent_id: (this._core as any).id ?? (this._core as any)._agentId,
-                    call_id: call.id,
-                    instructions: template,
-                });
-            }
 
             // Resolve greeting:
             // - Static greetings are sent in channel/agent config → server handles TTS
