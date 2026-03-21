@@ -692,9 +692,10 @@ The server maintains conversation history per call. You can read, inject, clear,
 agent.on("call.started", async (call) => {
   const customer = await db.findByPhone(call.from);
   if (customer) {
-    await call.addHistory([
-      { role: "system", content: `Customer: ${customer.name}, Plan: ${customer.plan}` }
-    ]);
+    // Set template variables
+    await call.setPromptVars({ customer_name: customer.name, plan: customer.plan });
+    // Append extra context (added to end of system prompt before each LLM request)
+    await call.addContext(`VIP tier: ${customer.tier}. Last purchase: ${customer.lastPurchase}`);
   }
 });
 
