@@ -159,19 +159,7 @@ export class Agent {
             }
 
             if (promptText) {
-                // Built-in prompt variables — replace {{var}} placeholders
-                const now = new Date();
-                const pad = (n: number) => String(n).padStart(2, "0");
-                const vars: Record<string, string> = {
-                    date: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`,
-                    time: `${pad(now.getHours())}:${pad(now.getMinutes())}`,
-                    datetime: now.toISOString(),
-                    day: now.toLocaleDateString("es", { weekday: "long" }),
-                    timestamp: String(now.getTime()),
-                };
-                promptText = promptText.replace(/\{\{(\w+)\}\}/g, (_, key) => vars[key] ?? `{{${key}}}`);
-
-                (cfg as any).instructions = promptText;
+                // Store template for per-call resolution (NOT sent in agent.create)
                 this._resolvedPrompt = promptText;
             }
             const tools = this._getToolDefinitions();
@@ -381,6 +369,28 @@ export class Agent {
             // Set prompt template on call for setPromptVars() / setPromptFile()
             call._promptsDir = "prompts";
             call._promptTemplate = this._resolvedPrompt ?? this.prompt;
+
+            // Resolve {{vars}} and send instructions per-session
+            const template = call._promptTemplate;
+            if (template && (this._serverSideLLM || this.model)) {
+                const now = new Date();
+                const pad = (n: number) => String(n).padStart(2, "0");
+                const builtinVars: Record<string, string> = {
+                    date: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`,
+                    time: `${pad(now.getHours())}:${pad(now.getMinutes())}`,
+                    datetime: now.toISOString(),
+                    day: now.toLocaleDateString("es", { weekday: "long" }),
+                    timestamp: String(now.getTime()),
+                };
+                const resolved = template.replace(/\{\{(\w+)\}\}/g, (_: string, key: string) => builtinVars[key] ?? `{{${key}}}`);
+                // Send resolved prompt to server for this session
+                (this._core as any)._send({
+                    event: "agent.configure",
+                    agent_id: (this._core as any).id ?? (this._core as any)._agentId,
+                    call_id: call.id,
+                    instructions: resolved,
+                });
+            }
 
             // Resolve greeting:
             // - Static greetings are sent in channel/agent config → server handles TTS
