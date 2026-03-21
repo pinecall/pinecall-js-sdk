@@ -370,25 +370,15 @@ export class Agent {
             call._promptsDir = "prompts";
             call._promptTemplate = this._resolvedPrompt ?? this.prompt;
 
-            // Resolve {{vars}} and send instructions per-session
+            // Send raw prompt template to server for this session
+            // Server resolves {{date}}, {{time}}, {{day}} etc. before EACH LLM request
             const template = call._promptTemplate;
             if (template && (this._serverSideLLM || this.model)) {
-                const now = new Date();
-                const pad = (n: number) => String(n).padStart(2, "0");
-                const builtinVars: Record<string, string> = {
-                    date: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`,
-                    time: `${pad(now.getHours())}:${pad(now.getMinutes())}`,
-                    datetime: now.toISOString(),
-                    day: now.toLocaleDateString("es", { weekday: "long" }),
-                    timestamp: String(now.getTime()),
-                };
-                const resolved = template.replace(/\{\{(\w+)\}\}/g, (_: string, key: string) => builtinVars[key] ?? `{{${key}}}`);
-                // Send resolved prompt to server for this session
                 (this._core as any)._send({
                     event: "agent.configure",
                     agent_id: (this._core as any).id ?? (this._core as any)._agentId,
                     call_id: call.id,
-                    instructions: resolved,
+                    instructions: template,
                 });
             }
 
