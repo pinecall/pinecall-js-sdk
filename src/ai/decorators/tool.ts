@@ -26,6 +26,13 @@ interface ToolSchema {
     [paramName: string]: ToolParamSchema;
 }
 
+/** Standalone tool definition — extract to a separate file for cleaner agents. */
+export interface ToolDef {
+    description: string;
+    params: ToolSchema;
+    required?: string[];
+}
+
 interface ToolMeta {
     methodName: string;
     description: string;
@@ -39,15 +46,21 @@ interface ToolMeta {
  * Supports both TC39 stage-3 decorators (esbuild/tsup) and
  * legacy experimentalDecorators (tsc). Detection is automatic.
  *
- * @param description - Human-readable description of what the tool does
- * @param schema - Parameter schema { paramName: { type, description } }
- * @param required - Optional list of required params (defaults to all params)
+ * Usage:
+ *   @tool("Description", { param: { type: "string", description: "..." } })
+ *   @tool(myToolDef)  // ToolDef object from a separate file
  */
+export function tool(def: ToolDef): any;
+export function tool(description: string, schema?: ToolSchema, required?: string[]): any;
 export function tool(
-    description: string,
-    schema: ToolSchema,
+    descOrDef: string | ToolDef,
+    schema?: ToolSchema,
     required?: string[],
 ): any {
+    // Normalize: accept ToolDef object or separate params
+    const description = typeof descOrDef === "string" ? descOrDef : descOrDef.description;
+    const params = typeof descOrDef === "string" ? (schema ?? {}) : descOrDef.params;
+    const req = typeof descOrDef === "string" ? required : descOrDef.required;
     return function (...args: any[]) {
         if (
             args.length === 2 &&
@@ -62,8 +75,8 @@ export function tool(
             const meta: ToolMeta = {
                 methodName,
                 description,
-                schema,
-                required: required ?? Object.keys(schema),
+                schema: params,
+                required: req ?? Object.keys(params),
             };
 
             context.addInitializer(function (this: any) {
@@ -80,8 +93,8 @@ export function tool(
             const meta: ToolMeta = {
                 methodName,
                 description,
-                schema,
-                required: required ?? Object.keys(schema),
+                schema: params,
+                required: req ?? Object.keys(params),
             };
 
             const existing: ToolMeta[] = (target as any)[TOOL_METADATA_KEY] ?? [];

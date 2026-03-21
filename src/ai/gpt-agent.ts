@@ -31,7 +31,7 @@ import { Agent, type AgentOptions } from "./agent.js";
 
 // ─── Types ───────────────────────────────────────────────────────────────
 
-export interface ToolDef {
+export interface InternalToolDef {
     description: string;
     parameters: Record<string, unknown>;
     handler: string;
@@ -51,7 +51,7 @@ export class GPTAgent extends Agent {
     // ── Tool registry (class-level) ──────────────────────────────────────
 
     /** @internal Tool definitions registered via defineTool(). */
-    static _tools?: Map<string, ToolDef>;
+    static _tools?: Map<string, InternalToolDef>;
 
     /**
      * Register a tool on this agent class.

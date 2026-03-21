@@ -32,10 +32,11 @@ export type { AgentOptions } from "./agent.js";
 
 // GPTAgent (extends Agent, requires openai)
 export { GPTAgent } from "./gpt-agent.js";
-export type { ToolDef, GPTAgentOptions } from "./gpt-agent.js";
+export type { GPTAgentOptions } from "./gpt-agent.js";
 
 // Channel classes
 export { Channel, Phone, WebRTC } from "./channel.js";
 
 // Decorators
 export { tool } from "./decorators/tool.js";
+export type { ToolDef } from "./decorators/tool.js";
