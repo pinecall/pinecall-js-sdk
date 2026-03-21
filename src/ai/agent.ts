@@ -159,6 +159,18 @@ export class Agent {
             }
 
             if (promptText) {
+                // Built-in prompt variables — replace {{var}} placeholders
+                const now = new Date();
+                const pad = (n: number) => String(n).padStart(2, "0");
+                const vars: Record<string, string> = {
+                    date: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`,
+                    time: `${pad(now.getHours())}:${pad(now.getMinutes())}`,
+                    datetime: now.toISOString(),
+                    day: now.toLocaleDateString("es", { weekday: "long" }),
+                    timestamp: String(now.getTime()),
+                };
+                promptText = promptText.replace(/\{\{(\w+)\}\}/g, (_, key) => vars[key] ?? `{{${key}}}`);
+
                 (cfg as any).instructions = promptText;
                 this._resolvedPrompt = promptText;
             }
