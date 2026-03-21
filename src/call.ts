@@ -348,15 +348,25 @@ export class Call extends TypedEmitter<CallEvents> {
     }
 
     /**
-     * Replace {{variables}} in the current prompt template and update the system prompt.
-     * Call setPrompt() or setPromptFile() first to set the template.
+     * Set {{variables}} in the prompt template. Server resolves them (along with
+     * built-in vars like {{date}}, {{time}}) before each LLM request.
      */
     async setPromptVars(vars: Record<string, string>): Promise<number> {
-        let text = this._promptTemplate;
-        for (const [key, val] of Object.entries(vars)) {
-            text = text.split(`{{${key}}}`).join(String(val));
-        }
-        return this._sendPrompt(text);
+        const res = await this._request("history.set_vars", "history.updated", { vars });
+        return res.count ?? 0;
+    }
+
+    /**
+     * Append extra context to the system prompt. Added after the main instructions
+     * before each LLM request. Useful for per-call context like customer info.
+     *
+     * @example
+     * await call.addContext(`Customer: ${user.name}, VIP tier: ${user.tier}`);
+     * await call.addContext(`Last purchase: ${user.lastPurchase}`);
+     */
+    async addContext(text: string): Promise<number> {
+        const res = await this._request("history.add_context", "history.updated", { text });
+        return res.count ?? 0;
     }
 
     /** @internal Send resolved prompt to server. */

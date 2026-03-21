@@ -594,7 +594,28 @@ async onCallStarted(call) {
 }
 ```
 
-`setPromptVars()` replaces all `{{key}}` occurrences in the current template and sends the resolved prompt to the server. The original template is preserved — call `setPromptVars()` again with different values to re-render.
+`setPromptVars()` sends the key-value pairs to the server, which merges them with built-in variables (`{{date}}`, `{{time}}`, etc.) and resolves everything before each LLM request. The original template is preserved.
+
+#### Built-in Variables
+
+The server automatically resolves these variables **before each LLM request** — no need to set them manually:
+
+| Variable | Example | Description |
+|----------|---------|-------------|
+| `{{date}}` | `2026-03-21` | Current date (YYYY-MM-DD) |
+| `{{time}}` | `10:14` | Current time (HH:MM) |
+| `{{day}}` | `Friday` | Day of the week |
+| `{{datetime}}` | `2026-03-21T10:14:05` | ISO datetime |
+| `{{timestamp}}` | `1774004045000` | Unix timestamp (ms) |
+
+These are resolved **per-message**, so `{{time}}` is always the exact time the user spoke — not when the call started.
+
+```
+# prompts/myagent.txt
+Today is {{day}}, {{date}}. Current time: {{time}}.
+
+You are a helpful assistant...
+```
 
 ---
 
@@ -661,7 +682,8 @@ The server maintains conversation history per call. You can read, inject, clear,
 | `call.clearHistory()` | `Promise<number>` | Clear history (system prompt preserved) |
 | `call.setPrompt(text)` | `Promise<number>` | Update system prompt mid-call |
 | `call.setPromptFile(name)` | `Promise<number>` | Load prompt from `prompts/` folder |
-| `call.setPromptVars(vars)` | `Promise<number>` | Replace `{{vars}}` in current prompt template |
+| `call.setPromptVars(vars)` | `Promise<number>` | Set `{{vars}}` for server-side template resolution |
+| `call.addContext(text)` | `Promise<number>` | Append extra context to system prompt |
 
 **Examples:**
 
